@@ -1,0 +1,15 @@
+{
+  "active": false,
+  "mode": "team",
+  "current_phase": "cancelled",
+  "started_at": "2026-04-16T16:54:54.002Z",
+  "updated_at": "2026-04-16T16:54:54.002Z",
+  "session_id": "019d9735-fd53-7a61-a7d5-06a38db6cb38",
+  "thread_id": "019d96c4-93a9-7641-99d6-bac57d571e10",
+  "turn_id": "019d9735-05d3-79a2-8c5b-40e7e248ee90",
+  "completed_at": "2026-04-16T23:35:53.640Z",
+  "team_name": "implement-the-approved-bridge",
+  "task_description": "Implement the approved bridge plan from .omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md using .omx/plans/prd-bridge-persistent-subagent-tty-llm-config.md and .omx/plans/test-spec-bridge-persistent-subagent-tty-llm-config.md",
+  "agent_count": 3,
+  "agent_types": "executor"
+}

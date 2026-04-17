@@ -1,0 +1,6 @@
+{
+  "last_turn_at": "2026-04-16T07:47:46.443Z",
+  "turn_count": 2,
+  "last_progress_at": "2026-04-16T07:47:46.443Z",
+  "last_agent_output": "**Team launch blocked**\n\n- `omx team --help` works, but actual launch failed:\n  - `Error: Team mode "
+}

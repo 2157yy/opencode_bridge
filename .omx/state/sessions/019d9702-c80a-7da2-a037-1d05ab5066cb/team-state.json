@@ -1,0 +1,11 @@
+{
+  "active": false,
+  "current_phase": "cancelled",
+  "completed_at": "2026-04-16T16:01:27.525Z",
+  "team_name": "implement-the-opencode-multi-c",
+  "terminal": true,
+  "last_turn_at": "2026-04-16T16:01:27.490Z",
+  "task_description": "Implement the OpenCode multi-CLI bridge from .omx/plans/prd-opencode-agent-bridge.md and .omx/plans/test-spec-opencode-agent-bridge.md",
+  "agent_count": 5,
+  "agent_types": "executor"
+}

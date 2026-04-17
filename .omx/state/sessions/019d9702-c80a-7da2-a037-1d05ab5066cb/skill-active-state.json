@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "active": true,
+  "skill": "team",
+  "keyword": "$team",
+  "phase": "planning",
+  "activated_at": "2026-04-16T16:01:57.956Z",
+  "updated_at": "2026-04-16T16:53:53.294Z",
+  "source": "keyword-detector",
+  "session_id": "019d9702-c80a-7da2-a037-1d05ab5066cb",
+  "thread_id": "019d9702-c80a-7da2-a037-1d05ab5066cb",
+  "turn_id": "019d9702-c84f-7312-bda2-ac2383177c52",
+  "active_skills": [
+    {
+      "skill": "team",
+      "phase": "planning",
+      "active": true,
+      "activated_at": "2026-04-16T16:01:57.956Z",
+      "updated_at": "2026-04-16T16:01:57.956Z",
+      "session_id": "019d9702-c80a-7da2-a037-1d05ab5066cb",
+      "thread_id": "019d9702-c80a-7da2-a037-1d05ab5066cb",
+      "turn_id": "019d9702-c84f-7312-bda2-ac2383177c52"
+    }
+  ],
+  "transition_message": "mode transiting: ralplan -> team",
+  "transition_messages": [
+    "mode transiting: ralplan -> team"
+  ],
+  "input_lock": {
+    "active": false,
+    "scope": "deep-interview-auto-approval",
+    "acquired_at": "2026-04-16T14:20:18.282Z",
+    "released_at": "2026-04-16T16:01:57.956Z",
+    "blocked_inputs": [
+      "yes",
+      "y",
+      "proceed",
+      "continue",
+      "ok",
+      "sure",
+      "go ahead",
+      "next i should"
+    ],
+    "message": "Deep interview is active; auto-approval shortcuts are blocked until the interview finishes.",
+    "exit_reason": "handoff"
+  },
+  "initialized_mode": "team",
+  "initialized_state_path": ".omx/state/team-state.json"
+}

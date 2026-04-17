@@ -1,0 +1,32 @@
+{
+  "active": false,
+  "mode": "ralplan",
+  "current_phase": "complete",
+  "started_at": "2026-04-16T15:55:33.229Z",
+  "updated_at": "2026-04-16T15:55:33.229Z",
+  "session_id": "omx-1776350955928-o7qcxv",
+  "turn_id": "019d9701-3938-73f3-a756-85ce62cabd4f",
+  "task_description": "Create a consensus implementation plan for persistent backend lifecycle, explicit stop, visible per-agent terminal windows, per-agent LLM config, and config persistence using .omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md.",
+  "input_spec": ".omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md",
+  "profile": "consensus-deliberate",
+  "current_iteration": 1,
+  "context_snapshot": ".omx/context/bridge-persistent-subagent-tty-llm-config-20260416T154206Z.md",
+  "completed_at": "2026-04-16T16:05:00Z",
+  "consensus": "approved",
+  "draft_plan": ".omx/plans/ralplan-draft-bridge-persistent-subagent-tty-llm-config.md",
+  "prd_path": ".omx/plans/prd-bridge-persistent-subagent-tty-llm-config.md",
+  "test_spec_path": ".omx/plans/test-spec-bridge-persistent-subagent-tty-llm-config.md",
+  "architect_resolution": [
+    "runtime lease metadata (`runtimeId` + owner PID) instead of PID-only control",
+    "connectExisting() must never create a backend",
+    "stop waits and owner is sole final state writer",
+    "separate attach-plan construction from OS window launching",
+    "inactive runtime allows stale status only; spawn/route/restart/stop fail",
+    "redact apiKey from CLI/status output while allowing plaintext internal persistence"
+  ],
+  "critic_verdict": "APPROVE",
+  "non_blocking_followups": [
+    "Confirm opencode attach env/flag contract for apiKey/baseUrl/model during implementation",
+    "Define Linux terminal fallback order and no-terminal error copy"
+  ]
+}

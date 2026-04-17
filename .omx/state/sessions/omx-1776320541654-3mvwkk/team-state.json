@@ -1,0 +1,77 @@
+{
+  "active": false,
+  "mode": "team",
+  "iteration": 0,
+  "max_iterations": 50,
+  "current_phase": "cancelled",
+  "task_description": "Implement the OpenCode multi-CLI bridge from .omx/plans/prd-opencode-agent-bridge.md and .omx/plans/test-spec-opencode-agent-bridge.md",
+  "started_at": "2026-04-16T12:32:31.396Z",
+  "tmux_pane_id": "%9",
+  "tmux_pane_set_at": "2026-04-16T12:32:31.397Z",
+  "team_name": "implement-the-opencode-multi-c",
+  "agent_count": 5,
+  "agent_types": "executor",
+  "available_agent_types": [
+    "analyst",
+    "api-reviewer",
+    "architect",
+    "build-fixer",
+    "code-reviewer",
+    "code-simplifier",
+    "critic",
+    "debugger",
+    "dependency-expert",
+    "designer",
+    "executor",
+    "explore",
+    "explore-harness",
+    "git-master",
+    "information-architect",
+    "performance-reviewer",
+    "planner",
+    "product-analyst",
+    "product-manager",
+    "qa-tester",
+    "quality-reviewer",
+    "quality-strategist",
+    "researcher",
+    "security-reviewer",
+    "sisyphus-lite",
+    "style-reviewer",
+    "team-executor",
+    "team-orchestrator",
+    "test-engineer",
+    "ux-researcher",
+    "verifier",
+    "vision",
+    "writer"
+  ],
+  "staffing_summary": "test-engineer x1 (primary delivery lane, medium reasoning); test-engineer x1 (verification + regression lane, medium reasoning); architect x1 (specialist support lane, high reasoning); test-engineer x2 (extra implementation capacity, medium reasoning)",
+  "staffing_allocations": [
+    {
+      "role": "test-engineer",
+      "count": 1,
+      "reason": "primary delivery lane",
+      "reasoningEffort": "medium"
+    },
+    {
+      "role": "test-engineer",
+      "count": 1,
+      "reason": "verification + regression lane",
+      "reasoningEffort": "medium"
+    },
+    {
+      "role": "architect",
+      "count": 1,
+      "reason": "specialist support lane",
+      "reasoningEffort": "high"
+    },
+    {
+      "role": "test-engineer",
+      "count": 2,
+      "reason": "extra implementation capacity",
+      "reasoningEffort": "medium"
+    }
+  ],
+  "completed_at": "2026-04-16T16:01:27.525Z"
+}

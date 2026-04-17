@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "active": true,
+  "skill": "team",
+  "keyword": "$team",
+  "phase": "shutdown",
+  "activated_at": "2026-04-16T16:42:51.807Z",
+  "updated_at": "2026-04-16T16:53:53.294Z",
+  "source": "keyword-detector",
+  "session_id": "019d9710-8f17-7f91-adf2-546f0cca85f5",
+  "turn_id": "019d9724-9923-7ec3-ac37-422b4e1dccde",
+  "active_skills": [
+    {
+      "skill": "team",
+      "phase": "shutdown",
+      "active": true,
+      "activated_at": "2026-04-16T16:42:51.807Z",
+      "updated_at": "2026-04-16T16:42:51.807Z",
+      "session_id": "019d9710-8f17-7f91-adf2-546f0cca85f5"
+    }
+  ],
+  "input_lock": {
+    "active": false,
+    "scope": "deep-interview-auto-approval",
+    "acquired_at": "2026-04-16T14:20:18.282Z",
+    "released_at": "2026-04-16T16:34:11.538Z",
+    "blocked_inputs": [
+      "yes",
+      "y",
+      "proceed",
+      "continue",
+      "ok",
+      "sure",
+      "go ahead",
+      "next i should"
+    ],
+    "message": "Deep interview is active; auto-approval shortcuts are blocked until the interview finishes.",
+    "exit_reason": "handoff"
+  },
+  "initialized_mode": "team",
+  "initialized_state_path": ".omx/state/team-state.json"
+}

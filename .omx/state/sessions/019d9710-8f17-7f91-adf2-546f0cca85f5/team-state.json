@@ -1,0 +1,14 @@
+{
+  "active": true,
+  "current_phase": "shutdown",
+  "task_description": "Launch omx team for implementing the approved bridge plan with 3 executor workers using model glm-4.7.",
+  "requested_workers": 3,
+  "requested_role": "executor",
+  "requested_model": "glm-4.7",
+  "spec": ".omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md",
+  "prd": ".omx/plans/prd-bridge-persistent-subagent-tty-llm-config.md",
+  "test_spec": ".omx/plans/test-spec-bridge-persistent-subagent-tty-llm-config.md",
+  "team_name": "implement-the-approved-bridge",
+  "reason": "Workers stalled on Codex update prompt / ready_prompt_timeout; no ACKs or task claims after multiple fallback interventions.",
+  "requested_action": "shutdown"
+}

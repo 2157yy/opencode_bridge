@@ -1,0 +1,15 @@
+{
+  "active": false,
+  "current_phase": "completed",
+  "task_description": "Initial consensus plan for .omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md",
+  "spec_path": ".omx/specs/deep-interview-bridge-persistent-subagent-tty-llm-config.md",
+  "context_path": ".omx/context/bridge-persistent-subagent-tty-llm-config-20260416T154206Z.md",
+  "stage": "initial-plan",
+  "iteration": 1,
+  "last_turn_at": "2026-04-16T16:01:57.919Z",
+  "completed_at": "2026-04-16T16:01:57.957Z",
+  "auto_completed_reason": "mode transiting: ralplan -> team",
+  "completion_note": "Auto-completed ralplan during allowlisted transition to team.",
+  "transition_source": "keyword-detector",
+  "transition_target_mode": "team"
+}

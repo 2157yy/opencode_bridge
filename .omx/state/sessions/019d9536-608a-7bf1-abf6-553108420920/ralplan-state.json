@@ -1,0 +1,15 @@
+{
+  "active": false,
+  "mode": "ralplan",
+  "current_phase": "completed",
+  "started_at": "2026-04-16T07:45:17.505Z",
+  "updated_at": "2026-04-16T07:45:17.505Z",
+  "session_id": "019d9536-608a-7bf1-abf6-553108420920",
+  "thread_id": "019d94f5-238a-7bc2-a4cd-3aa869c3ce14",
+  "turn_id": "019d953d-8ebe-7192-b2e2-da64ab727f65",
+  "completed_at": "2026-04-16T07:46:09.312Z",
+  "auto_completed_reason": "mode transiting: ralplan -> team",
+  "completion_note": "Auto-completed ralplan during allowlisted transition to team.",
+  "transition_source": "keyword-detector",
+  "transition_target_mode": "team"
+}

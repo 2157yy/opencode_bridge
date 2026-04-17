@@ -1,0 +1,14 @@
+{
+  "active": false,
+  "current_phase": "aborted",
+  "completed_at": "2026-04-16T16:43:30Z",
+  "team_name": "implement-the-approved-bridge",
+  "result": "aborted",
+  "abort_reason": "Workers stalled on Codex update prompt / ready_prompt_timeout; no ACKs, claims, or progress after multiple fallback interventions. Forced shutdown used because shutdown gate blocked with pending tasks.",
+  "last_status": {
+    "pending": 3,
+    "in_progress": 0,
+    "completed": 0,
+    "failed": 0
+  }
+}

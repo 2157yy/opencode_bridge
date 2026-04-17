@@ -1,0 +1,6 @@
+{
+  "last_turn_at": "2026-04-16T11:35:48.362Z",
+  "turn_count": 1,
+  "last_progress_at": "2026-04-16T11:35:48.362Z",
+  "last_agent_output": "- summary:\n  - The tmux pane shows an OpenAI Codex session in `~/opencode_bridge` with model `gpt-5."
+}

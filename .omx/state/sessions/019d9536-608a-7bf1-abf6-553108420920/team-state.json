@@ -1,0 +1,12 @@
+{
+  "active": false,
+  "current_phase": "blocked",
+  "error": "Team mode requires tmux. Install with: apt install tmux / brew install tmux",
+  "task": "Implement OpenCode multi-CLI bridge",
+  "status": "blocked",
+  "blocked_reason": "tmux missing",
+  "plan_paths": [
+    ".omx/plans/prd-opencode-agent-bridge.md",
+    ".omx/plans/test-spec-opencode-agent-bridge.md"
+  ]
+}
