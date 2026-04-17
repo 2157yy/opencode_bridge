@@ -419,7 +419,11 @@ export class OpenCodeBridge {
         this.monitor.unref?.();
     }
     async persist() {
-        await writeJsonFile(this.statePath, this.registry.snapshot());
+        const current = this.registry.snapshot();
+        const saved = await readJsonFile(this.statePath, null);
+        const merged = mergeSnapshots(saved, current);
+        this.registry = new BridgeRegistry(this.projectDir, merged);
+        await writeJsonFile(this.statePath, merged);
     }
     async loadPersistedState() {
         const saved = await readJsonFile(this.statePath, null);
@@ -496,4 +500,24 @@ function pickDefined(value) {
 }
 function delay(ms) {
     return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+function mergeSnapshots(saved, current) {
+    if (!saved) {
+        return current;
+    }
+    const agents = new Map();
+    for (const agent of saved.agents) {
+        agents.set(agent.id, structuredClone(agent));
+    }
+    for (const agent of current.agents) {
+        agents.set(agent.id, structuredClone(agent));
+    }
+    return {
+        ...saved,
+        ...current,
+        serverUrl: current.serverUrl ?? saved.serverUrl,
+        primaryAgentId: current.primaryAgentId ?? saved.primaryAgentId,
+        runtime: current.runtime ?? saved.runtime,
+        agents: [...agents.values()],
+    };
 }

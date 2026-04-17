@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import type { ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -634,6 +634,91 @@ test('spawnAgent persists llm config in state and forwards it to the launch plan
     baseUrl: 'https://llm.example.test',
     model: 'gpt-4o',
   });
+});
+
+test('persist preserves agents written by another CLI process', async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), 'opencode-bridge-merge-'));
+  const statePath = join(projectDir, 'state.json');
+  const sessions = new Map<string, any>();
+  const fakeClient = {
+    session: {
+      create: async ({ body }: { body: { title: string; parentID?: string } }) => {
+        const id = `session-${sessions.size + 1}`;
+        const session = {
+          id,
+          title: body.title,
+          parentID: body.parentID,
+          version: '1',
+          time: { updated: Date.now() },
+        };
+        sessions.set(id, session);
+        return { data: session };
+      },
+      get: async ({ path: { id } }: { path: { id: string } }) => ({ data: sessions.get(id) }),
+      status: async () => ({ data: {} }),
+      promptAsync: async () => ({ data: undefined }),
+    },
+  };
+
+  const bridge = new OpenCodeBridge({
+    projectDir,
+    statePath,
+    backendFactory: async () => ({ url: 'http://127.0.0.1:4096', close() {} }),
+    clientFactory: () => fakeClient as never,
+    launcher: () => new FakeProcess(9_001) as unknown as ChildProcess,
+    launchPlanFactory: () => ({
+      command: 'opencode',
+      args: ['attach', 'http://127.0.0.1:4096'],
+    }),
+    pollIntervalMs: 60_000,
+  });
+
+  await bridge.start();
+  const subagent = await (bridge as any).spawnAgent({ name: 'researcher' });
+  const saved = JSON.parse(await readFile(statePath, 'utf8')) as any;
+  const externalId = 'session-external';
+  await writeFile(
+    statePath,
+    JSON.stringify(
+      {
+        ...saved,
+        updatedAt: '2026-04-16T23:59:59.000Z',
+        counts: {
+          ...saved.counts,
+          total: saved.counts.total + 1,
+          active: saved.counts.active + 1,
+        },
+        agents: [
+          ...saved.agents,
+          {
+            ...saved.agents.find((agent: any) => agent.id === subagent.id),
+            id: externalId,
+            sessionId: externalId,
+            windowId: externalId,
+            name: 'external',
+            createdAt: '2026-04-16T23:59:59.000Z',
+            updatedAt: '2026-04-16T23:59:59.000Z',
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  await bridge.recordArtifact(subagent.id, 'keep alive');
+  const merged = JSON.parse(await readFile(statePath, 'utf8')) as any;
+
+  assert.equal(
+    merged.agents.some((agent: any) => agent.id === externalId),
+    true,
+    'external agent should survive a later persist from another process',
+  );
+  assert.equal(
+    merged.agents.some((agent: any) => agent.id === subagent.id),
+    true,
+    'original agent should still be present after merge',
+  );
 });
 
 test('restartAgent reuses persisted llm config for relaunch', async () => {

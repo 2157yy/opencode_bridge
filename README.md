@@ -114,6 +114,7 @@ Use the approved verification ladder from the test spec:
 2. integration coverage for owner/start vs client/connectExisting semantics
 3. cross-process CLI coverage for `start -> spawn -> status -> route -> stop`
 4. manual validation that spawned subagents open in visible terminal windows
+5. smoke-test walkthrough in [`SMOKE_TEST.md`](./SMOKE_TEST.md)
 
 Repo command surface:
 

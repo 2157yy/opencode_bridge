@@ -518,7 +518,11 @@ export class OpenCodeBridge {
   }
 
   private async persist(): Promise<void> {
-    await writeJsonFile(this.statePath, this.registry.snapshot());
+    const current = this.registry.snapshot();
+    const saved = await readJsonFile<BridgeSnapshot | null>(this.statePath, null);
+    const merged = mergeSnapshots(saved, current);
+    this.registry = new BridgeRegistry(this.projectDir, merged);
+    await writeJsonFile(this.statePath, merged);
   }
 
   private async loadPersistedState(): Promise<void> {
@@ -605,4 +609,27 @@ function pickDefined<T extends object>(value: T): Partial<T> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+function mergeSnapshots(saved: BridgeSnapshot | null, current: BridgeSnapshot): BridgeSnapshot {
+  if (!saved) {
+    return current;
+  }
+
+  const agents = new Map<string, AgentRecord>();
+  for (const agent of saved.agents) {
+    agents.set(agent.id, structuredClone(agent));
+  }
+  for (const agent of current.agents) {
+    agents.set(agent.id, structuredClone(agent));
+  }
+
+  return {
+    ...saved,
+    ...current,
+    serverUrl: current.serverUrl ?? saved.serverUrl,
+    primaryAgentId: current.primaryAgentId ?? saved.primaryAgentId,
+    runtime: current.runtime ?? saved.runtime,
+    agents: [...agents.values()],
+  };
 }
