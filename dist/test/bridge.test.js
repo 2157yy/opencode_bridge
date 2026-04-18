@@ -151,6 +151,7 @@ test('default launch plan attaches each CLI to the shared backend server and inc
             OPENCODE_AGENT_MODEL: 'gpt-4o',
             OPENCODE_MODEL: 'gpt-4o',
         },
+        trackProcessExit: false,
     });
 });
 test('connectExisting reuses the saved backend URL when the existing runtime is still reachable', async () => {

@@ -32,9 +32,14 @@ export type LaunchPlan = {
   command: string;
   args: string[];
   env?: NodeJS.ProcessEnv;
+  trackProcessExit?: boolean;
 };
 
-export type ProcessLauncher = (command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }) => ChildProcess;
+export type ProcessLauncher = (
+  command: string,
+  args: string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv; title?: string },
+) => ChildProcess;
 
 export async function startBackend(options: BackendFactoryOptions): Promise<BackendHandle> {
   const server = await createOpencodeServer({
@@ -84,6 +89,7 @@ export function defaultLaunchPlan(options: LaunchOptions): LaunchPlan {
     command: 'opencode',
     args: ['attach', options.serverUrl, '--dir', options.projectDir, `--session=${options.sessionId}`],
     env: llmConfigToLaunchEnv(llmConfig),
+    trackProcessExit: false,
   };
 }
 

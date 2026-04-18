@@ -1,11 +1,11 @@
 import type { ChildProcess } from 'node:child_process';
-import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Session, SessionStatus } from '@opencode-ai/sdk';
 import { readJsonFile, writeJsonFile } from './store.js';
 import { BridgeRegistry, type AgentRecord, type BridgeSnapshot, type LlmConfig } from './registry.js';
 import { createClient, defaultLaunchPlan, startBackend, type BackendHandle, type LaunchPlan, type ProcessLauncher } from './opencode.js';
+import { defaultLauncher } from './launcher.js';
 import { mapSessionStatus, summarizeSessionStatus } from './state-machine.js';
 
 export type BridgeOptions = {
@@ -219,13 +219,14 @@ export class OpenCodeBridge {
 
     const proc = this.launcher(launchPlan.command, launchPlan.args, {
       cwd: this.projectDir,
+      title: options.name,
       env: {
         ...process.env,
         ...launchPlan.env,
       },
     });
 
-    this.bindProcess(record.id, proc);
+    this.bindProcess(record.id, proc, launchPlan.trackProcessExit ?? false);
     this.registry.register({
       ...record,
       command: launchPlan.command,
@@ -292,13 +293,14 @@ export class OpenCodeBridge {
 
     const proc = this.launcher(launchPlan.command, launchPlan.args, {
       cwd: this.projectDir,
+      title: agent.name,
       env: {
         ...process.env,
         ...launchPlan.env,
       },
     });
 
-    this.bindProcess(agent.id, proc);
+    this.bindProcess(agent.id, proc, launchPlan.trackProcessExit ?? false);
     this.registry.register({
       ...agent,
       command: launchPlan.command,
@@ -470,7 +472,7 @@ export class OpenCodeBridge {
     return agent;
   }
 
-  private bindProcess(agentId: string, proc: ChildProcess): void {
+  private bindProcess(agentId: string, proc: ChildProcess, trackProcessExit: boolean): void {
     if (proc.pid) {
       this.registry.register({
         ...this.requireAgent(agentId),
@@ -478,12 +480,14 @@ export class OpenCodeBridge {
       });
     }
 
-    proc.once('exit', (code, signal) => {
-      void this.handleProcessExit(agentId, code, signal);
-    });
     proc.once('error', (error) => {
       void this.handleProcessError(agentId, error);
     });
+    if (trackProcessExit) {
+      proc.once('exit', (code, signal) => {
+        void this.handleProcessExit(agentId, code, signal);
+      });
+    }
   }
 
   private async handleProcessExit(agentId: string, code: number | null, signal: NodeJS.Signals | null): Promise<void> {
@@ -575,17 +579,6 @@ export class OpenCodeBridge {
       return false;
     }
   }
-}
-
-function defaultLauncher(command: string, args: string[], options: { cwd: string; env?: NodeJS.ProcessEnv }): ChildProcess {
-  const child = spawn(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    detached: true,
-    stdio: 'ignore',
-  });
-  child.unref();
-  return child;
 }
 
 export function makeStatePath(projectDir: string): string {

@@ -41,6 +41,7 @@ export function defaultLaunchPlan(options) {
         command: 'opencode',
         args: ['attach', options.serverUrl, '--dir', options.projectDir, `--session=${options.sessionId}`],
         env: llmConfigToLaunchEnv(llmConfig),
+        trackProcessExit: false,
     };
 }
 function pickFlatLlm(options) {

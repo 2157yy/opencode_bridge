@@ -180,6 +180,17 @@ test('restartAgent relaunches a registered agent and clears stale exit state', a
             processes.push(proc);
             return proc;
         },
+        launchPlanFactory: (options) => ({
+            command: 'opencode',
+            args: ['attach', 'http://127.0.0.1:4096', '--dir', options.projectDir, `--session=${options.sessionId}`],
+            trackProcessExit: true,
+            env: {
+                ...(options.llmConfig?.apiKey ? { OPENAI_API_KEY: options.llmConfig.apiKey } : {}),
+                ...(options.llmConfig?.baseUrl ? { OPENAI_BASE_URL: options.llmConfig.baseUrl } : {}),
+                ...(options.llmConfig?.model ? { OPENCODE_AGENT_MODEL: options.llmConfig.model } : {}),
+                ...(options.llmConfig?.model ? { OPENCODE_MODEL: options.llmConfig.model } : {}),
+            },
+        }),
         pollIntervalMs: 60_000,
     });
     await bridge.start();
@@ -197,14 +208,15 @@ test('restartAgent relaunches a registered agent and clears stale exit state', a
     assert.equal(restarted.status, 'running');
     assert.equal(restarted.phase, 'running');
     assert.equal(restarted.exit, undefined);
-    assert.deepEqual(launches.at(-1), {
-        command: 'opencode',
-        args: ['attach', 'http://127.0.0.1:4096', '--dir', projectDir, `--session=${subagent.sessionId}`],
-        env: {
-            ...process.env,
-            OPENCODE_AGENT_MODEL: 'gpt-4o',
-            OPENCODE_MODEL: 'gpt-4o',
-        },
-    });
+    assert.equal(launches.at(-1)?.command, 'opencode');
+    assert.deepEqual(launches.at(-1)?.args, [
+        'attach',
+        'http://127.0.0.1:4096',
+        '--dir',
+        projectDir,
+        `--session=${subagent.sessionId}`,
+    ]);
+    assert.equal(launches.at(-1)?.env?.OPENCODE_AGENT_MODEL, 'gpt-4o');
+    assert.equal(launches.at(-1)?.env?.OPENCODE_MODEL, 'gpt-4o');
     await bridge.shutdown();
 });

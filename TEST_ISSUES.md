@@ -1,40 +1,76 @@
-# opencode_bridge 测试问题记录
+# opencode_bridge 当前遗留问题清单
 
-## 2026-04-17
+> 本文档只保留 **按最近两轮人工回归（2026-04-17 / 2026-04-18）确认仍然存在** 的问题。
+> 已修复、已验证通过、或属于预期行为/测试输入错误的条目已移除。
 
-### 1. `route` 读不到刚 `spawn` 的 agent
-- 现象：`spawn` 返回了新 agent，但下一次独立 CLI 调用 `route` 报 `unknown agent`
-- 结论：后台 owner 进程会把旧内存状态重新写回磁盘，覆盖掉别的 CLI 刚写入的新 agent
-- 处理：已修复为在 `persist()` 时先与磁盘 state 合并，再写回
+## 1. `stop` 只等待 runtime inactive，没有等待 backend 监听真正退出
 
-### 2. `stop` 后 backend 监听端口可能仍占用
-- 现象：`stop` 后再次 `start` 有时提示 4096 端口已被占用
-- 结论：`opencode` backend 进程可能残留
-- 备注：测试时需先确认 `lsof -iTCP:4096 -sTCP:LISTEN`
-
-### 3. `start` 命令在当前 shell 会阻塞
-- 现象：`start` 正常输出 snapshot 后持续运行，命令本身不会立即返回
-- 结论：这是预期行为，需在独立终端继续执行 `status` / `spawn` / `route`
-
-### 4. 重复 `start` 后可能出现多个 `primary` agent
-- 现象：再次执行 `start` 后，`agents` 列表里保留了旧 primary，并新增了一个新的 primary
-- 结论：当前 runtime 恢复/合并逻辑需要继续确认是否应当复用现有 primary
-- 备注：测试时重点关注 `counts.total` 是否随着重复启动异常增长
-
-### 5. `stop` 后 runtime inactive，但 agent 计数仍显示 active
-- 现象：`stop --project /Users/ljp/clock` 返回 `runtime.active: false`，但 `counts.active` 仍是 `3`
-- 结论：runtime 关闭与 agent 终态同步需要继续确认
-- 备注：当前 smoke test 只验证显式 stop 成功，不把这个计数作为阻塞项
-
-### 6. 缺少可对话的独立终端窗口
-- 现象：测试过程中没有得到任何一个可以直接对话的终端窗口
-- 问题需求：希望用 `tmux` 创建和管理窗口，让每个子代理都有可见、可交互的终端会话
-
-### 7. 每个智能体应是完整 CLI
-- 现象：当前子代理更像后台会话，不像一个可完整运行能力的 CLI
-- 问题需求：每个智能体都应能读写、调用 skills、tools、MCP、hook
-- 期望方式：每个 `tmux` 窗口里启动一个 `opencode` 交互命令行，类似
+- 现象：`stop --project /Users/ljp/clock` 返回成功，且 `runtime.active: false`，但随后执行：
   ```bash
-  export OMX_TEAM_WORKER_CLI=codex
+  lsof -nP -iTCP:4096 -sTCP:LISTEN
   ```
-  这样的 worker 运行配置
+  仍能看到 `.opencode` 继续监听 `127.0.0.1:4096`
+- 最近复现：
+  - 2026-04-17：`stop` 后仍需手工 `kill`
+  - 2026-04-18：clean regression 后再次复现，残留 PID 为 `75239`
+- 影响：下一轮测试前必须手工清理残留 PID，否则会干扰新的 `start`
+- 当前结论：
+  - `shutdown()` 路径会调用 `this.backend?.close()`
+  - 但 `stop()` 只是向 owner 进程发送 `SIGTERM`，随后轮询 state 文件里的 `runtime.active`
+  - 它没有验证 backend 监听端口是否真正释放
+  - 因此这是 **“stop 完成条件过弱”** 的问题，而不应简单表述为“缺少一行 backend.close()”
+
+## 2. 历史 `primary` / `subagent` 记录持续累积
+
+- 现象：每次新一轮 `start` 之后，`status` 仍保留旧的 `primary` 和 `subagent` 记录，而不是只聚焦当前 runtime
+- 最近复现：
+  - 2026-04-17：`counts.total` 增长到 `5`
+  - 2026-04-18：clean regression 后 `counts.total` 继续增长到 `7`
+- 影响：
+  - `status` 输出混入历史运行痕迹，可读性下降
+  - 用户难以判断哪些 agent 属于当前这轮 runtime
+- 当前结论：
+  - `start` 会复用并合并旧 state，而不是在新 runtime 上只保留当前轮 agent
+  - 历史 agent 没有被显式归档或裁剪
+  - 因此这是 **“runtime 重启时 state 归档边界不清”** 的问题
+
+## 3. `stop` 后 agent 计数不会随 runtime 一起收敛
+
+- 现象：`stop` 成功后，`runtime.active` 会变为 `false`，但 `counts.active` 仍保留历史高值，不会同步下降
+- 最近复现：
+  - 2026-04-17：`runtime.active: false`，但 `counts.active` 仍显示 `5`
+  - 2026-04-18：`runtime.active: false`，但 `counts.active` 仍显示 `7`
+- 影响：runtime 生命周期与 agent 统计信息不一致，容易误导状态判断
+- 当前结论：
+  - `counts.active` 是按 agent 当前状态直接统计出来的，并不会在 runtime 关闭后自动切换口径
+  - 但 `stop` 语义上又代表“当前 runtime 已结束”
+  - 因此这是 **“runtime 关闭后统计口径与生命周期语义不一致”** 的问题
+
+## 4. `spawnAgent` 存在重复注册，第一次 `queued` 写入没有实际持久化价值
+
+- 现象：`src/bridge.ts` 的 `spawnAgent()` 里先执行一次
+  ```ts
+  this.registry.register({ ... status: 'queued', phase: 'queued', ... });
+  ```
+  随后又立刻执行第二次 `register()`，把同一条记录覆盖成 `running`
+- 影响：
+  - 第一次 `queued` 记录不会进入最终持久化结果
+  - 这次 register 只是在内存里先拿到 `id`，再立刻被覆盖
+  - 逻辑噪音较大，后续维护时容易误读为真的存在 `queued` 生命周期
+- 当前结论：这段逻辑可以收敛为单次注册，但需要同步处理 `bindProcess()` 对已注册 agent 的依赖
+
+## 5. `restartAgent` 只能复用归一化后的 llmConfig，不能恢复原始 env 语义
+
+- 现象：`restartAgent()` 里只使用：
+  ```ts
+  const llmConfig = agent.llmConfig ?? agent.llm;
+  ```
+  然后把这份持久化后的配置重新注入启动环境
+- 影响：
+  - 如果首次 `spawnAgent()` 依赖的是 **未被 `resolveLlmConfig()` 归一化捕获** 的环境来源，重启时这部分默认值会丢失
+  - `restart` 能保留 `apiKey / baseUrl / model` 这三个显式字段，但不能恢复更宽的原始 env 语义
+- 当前结论：这不是普通 `OPENAI_API_KEY / OPENAI_BASE_URL / OPENCODE_MODEL` 丢失问题，而是 **“restart 只能复用归一化配置，不能还原启动时环境来源”** 的问题
+- 根治建议：
+  1. 在 `spawnAgent()` 时把**实际生效的 LLM 相关 env 快照**持久化到 `AgentRecord`（例如 `spawnEnv` / `llmEnv`）
+  2. 在 `restartAgent()` 时优先使用这份持久化快照重建启动环境
+  3. `resolveLlmConfig({})` 只应作为老数据兼容的 fallback，不应作为主要修复手段
