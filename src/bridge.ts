@@ -95,7 +95,7 @@ export class OpenCodeBridge {
 
     await this.loadPersistedState();
     if (!this.registry.runtimeState()?.active) {
-      this.resetForNewRuntime();
+      await this.resetForNewRuntime();
     }
     await this.ensureOwnerClient();
 
@@ -173,6 +173,10 @@ export class OpenCodeBridge {
       const saved = await readJsonFile<BridgeSnapshot | null>(this.statePath, null);
       if (!saved?.runtime?.active) {
         this.backend?.close();
+        const serverUrl = this.serverUrl;
+        if (serverUrl) {
+          await waitForPortUnreachable(serverUrl, 3_000);
+        }
         this.registry = new BridgeRegistry(this.projectDir, saved ?? undefined);
         this.serverUrl = saved?.serverUrl;
         this.started = false;
@@ -538,15 +542,18 @@ export class OpenCodeBridge {
     this.serverUrl = saved?.serverUrl;
   }
 
-  private resetForNewRuntime(): void {
+  private async resetForNewRuntime(): Promise<void> {
     const current = this.registry.snapshot();
-    this.registry = new BridgeRegistry(this.projectDir, {
+    const resetSnapshot: BridgeSnapshot = {
       projectDir: this.projectDir,
       createdAt: current.createdAt,
       updatedAt: current.updatedAt,
       agents: [],
-    });
+      counts: { active: 0, failed: 0, completed: 0, blocked: 0, total: 0 },
+    };
+    this.registry = new BridgeRegistry(this.projectDir, resetSnapshot);
     this.serverUrl = undefined;
+    await writeJsonFile(this.statePath, resetSnapshot);
   }
 
   private async ensureOwnerClient(): Promise<void> {
@@ -605,6 +612,22 @@ function pickDefined<T extends object>(value: T): Partial<T> {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+async function waitForPortUnreachable(url: string, timeoutMs: number): Promise<void> {
+  const urlObj = new URL(url);
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 500);
+      await fetch(url, { signal: controller.signal, method: 'HEAD' });
+      clearTimeout(tid);
+      await delay(200);
+    } catch {
+      return;
+    }
+  }
 }
 
 function mergeSnapshots(saved: BridgeSnapshot | null, current: BridgeSnapshot): BridgeSnapshot {

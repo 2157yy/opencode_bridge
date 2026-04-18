@@ -40,7 +40,7 @@ export class OpenCodeBridge {
         }
         await this.loadPersistedState();
         if (!this.registry.runtimeState()?.active) {
-            this.resetForNewRuntime();
+            await this.resetForNewRuntime();
         }
         await this.ensureOwnerClient();
         this.ownerRuntime = true;
@@ -108,6 +108,10 @@ export class OpenCodeBridge {
             const saved = await readJsonFile(this.statePath, null);
             if (!saved?.runtime?.active) {
                 this.backend?.close();
+                const serverUrl = this.serverUrl;
+                if (serverUrl) {
+                    await waitForPortUnreachable(serverUrl, 3_000);
+                }
                 this.registry = new BridgeRegistry(this.projectDir, saved ?? undefined);
                 this.serverUrl = saved?.serverUrl;
                 this.started = false;
@@ -434,15 +438,18 @@ export class OpenCodeBridge {
         this.registry = new BridgeRegistry(this.projectDir, saved ?? undefined);
         this.serverUrl = saved?.serverUrl;
     }
-    resetForNewRuntime() {
+    async resetForNewRuntime() {
         const current = this.registry.snapshot();
-        this.registry = new BridgeRegistry(this.projectDir, {
+        const resetSnapshot = {
             projectDir: this.projectDir,
             createdAt: current.createdAt,
             updatedAt: current.updatedAt,
             agents: [],
-        });
+            counts: { active: 0, failed: 0, completed: 0, blocked: 0, total: 0 },
+        };
+        this.registry = new BridgeRegistry(this.projectDir, resetSnapshot);
         this.serverUrl = undefined;
+        await writeJsonFile(this.statePath, resetSnapshot);
     }
     async ensureOwnerClient() {
         const runtime = this.registry.runtimeState();
@@ -494,6 +501,22 @@ function pickDefined(value) {
 }
 function delay(ms) {
     return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+async function waitForPortUnreachable(url, timeoutMs) {
+    const urlObj = new URL(url);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const controller = new AbortController();
+            const tid = setTimeout(() => controller.abort(), 500);
+            await fetch(url, { signal: controller.signal, method: 'HEAD' });
+            clearTimeout(tid);
+            await delay(200);
+        }
+        catch {
+            return;
+        }
+    }
 }
 function mergeSnapshots(saved, current) {
     if (!saved) {
