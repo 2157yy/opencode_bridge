@@ -107,8 +107,13 @@ export class OpenCodeBridge {
         while (Date.now() < deadline) {
             const saved = await readJsonFile(this.statePath, null);
             if (!saved?.runtime?.active) {
+                this.backend?.close();
                 this.registry = new BridgeRegistry(this.projectDir, saved ?? undefined);
                 this.serverUrl = saved?.serverUrl;
+                this.started = false;
+                this.ownerRuntime = false;
+                this.backend = undefined;
+                this.client = undefined;
                 return this.registry.snapshot();
             }
             await delay(100);
@@ -124,20 +129,8 @@ export class OpenCodeBridge {
         const parentSessionId = parent?.sessionId;
         const session = await this.createSession(options.name, parentSessionId);
         const llmConfig = resolveLlmConfig({ apiKey: options.apiKey, baseUrl: options.baseUrl, model: options.model });
-        const record = this.registry.register({
-            id: session.id,
-            role,
-            name: options.name,
-            sessionId: session.id,
-            windowId: session.id,
-            parentId: parent?.id ?? undefined,
-            command: 'opencode',
-            args: [],
-            status: 'queued',
-            phase: 'queued',
-            llm: llmConfig,
-            llmConfig,
-        });
+        const runtime = this.registry.runtimeState();
+        const runtimeId = runtime?.runtimeId;
         const launchPlan = this.launchPlanFactory({
             projectDir: this.projectDir,
             serverUrl: this.serverUrl,
@@ -146,25 +139,30 @@ export class OpenCodeBridge {
             role,
             llmConfig,
         });
+        const spawnEnv = Object.fromEntries(Object.entries({ ...process.env, ...launchPlan.env }).filter(([, v]) => v !== undefined));
         const proc = this.launcher(launchPlan.command, launchPlan.args, {
             cwd: this.projectDir,
             title: options.name,
-            env: {
-                ...process.env,
-                ...launchPlan.env,
-            },
+            env: spawnEnv,
         });
-        this.bindProcess(record.id, proc, launchPlan.trackProcessExit ?? false);
-        this.registry.register({
-            ...record,
+        const record = this.registry.register({
+            id: session.id,
+            role,
+            name: options.name,
+            sessionId: session.id,
+            windowId: session.id,
+            parentId: parent?.id ?? undefined,
             command: launchPlan.command,
             args: launchPlan.args,
             status: 'running',
             phase: 'running',
             llm: llmConfig,
             llmConfig,
+            llmEnv: spawnEnv,
+            runtimeId,
             ...(proc.pid ? { pid: proc.pid } : {}),
         });
+        this.bindProcess(record.id, proc, launchPlan.trackProcessExit ?? false);
         await this.persist();
         return this.requireAgent(record.id);
     }
@@ -213,13 +211,14 @@ export class OpenCodeBridge {
             role: agent.role,
             llmConfig,
         });
+        const restartEnv = agent.llmEnv ?? {
+            ...process.env,
+            ...launchPlan.env,
+        };
         const proc = this.launcher(launchPlan.command, launchPlan.args, {
             cwd: this.projectDir,
             title: agent.name,
-            env: {
-                ...process.env,
-                ...launchPlan.env,
-            },
+            env: restartEnv,
         });
         this.bindProcess(agent.id, proc, launchPlan.trackProcessExit ?? false);
         this.registry.register({
@@ -232,6 +231,7 @@ export class OpenCodeBridge {
             exit: undefined,
             llm: llmConfig,
             llmConfig,
+            llmEnv: agent.llmEnv,
         });
         if (agent.status === 'running') {
             this.registry.syncPhase(agent.id, 'running');

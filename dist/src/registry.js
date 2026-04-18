@@ -81,8 +81,10 @@ export class BridgeRegistry {
             observedSessionVersion: 'observedSessionVersion' in agent ? agent.observedSessionVersion : existing?.observedSessionVersion,
             llm: 'llm' in agent ? structuredClone(agent.llm) : ('llmConfig' in agent ? structuredClone(agent.llmConfig) : structuredClone(existing?.llm ?? existing?.llmConfig)),
             llmConfig: 'llmConfig' in agent ? structuredClone(agent.llmConfig) : ('llm' in agent ? structuredClone(agent.llm) : structuredClone(existing?.llmConfig ?? existing?.llm)),
+            llmEnv: 'llmEnv' in agent ? structuredClone(agent.llmEnv) : existing?.llmEnv,
             artifacts: structuredClone(agent.artifacts ?? existing?.artifacts ?? []),
             history: structuredClone(agent.history ?? existing?.history ?? []),
+            runtimeId: 'runtimeId' in agent ? agent.runtimeId : existing?.runtimeId,
         };
         this.agents.set(record.id, record);
         if (record.role === 'primary') {
@@ -96,12 +98,18 @@ export class BridgeRegistry {
     }
     primary() {
         if (this.primaryAgentId) {
-            return this.agents.get(this.primaryAgentId);
+            const agent = this.agents.get(this.primaryAgentId);
+            if (agent && (!this.runtime?.runtimeId || agent.runtimeId === this.runtime?.runtimeId)) {
+                return agent;
+            }
         }
-        return [...this.agents.values()].find((agent) => agent.role === 'primary');
+        return [...this.agents.values()].find((agent) => agent.role === 'primary' && (!this.runtime?.runtimeId || agent.runtimeId === this.runtime?.runtimeId));
     }
     list() {
-        return [...this.agents.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+        const currentRuntimeId = this.runtime?.runtimeId;
+        return [...this.agents.values()]
+            .filter((agent) => !currentRuntimeId || agent.runtimeId === currentRuntimeId)
+            .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     }
     transition(id, to, note, phase) {
         const agent = this.require(id);
@@ -164,9 +172,10 @@ export class BridgeRegistry {
     }
     counts() {
         const agents = this.list();
+        const activeCount = agents.filter((agent) => agent.status === 'running' || agent.status === 'produced').length;
         return {
             total: agents.length,
-            active: agents.filter((agent) => agent.status === 'running' || agent.status === 'produced').length,
+            active: this.runtime?.active ? activeCount : 0,
             blocked: agents.filter((agent) => agent.status === 'blocked').length,
             failed: agents.filter((agent) => agent.status === 'failed').length,
             completed: agents.filter((agent) => agent.status === 'done').length,

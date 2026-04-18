@@ -209,10 +209,9 @@ export class OpenCodeBridge {
       llmConfig,
     });
 
-    const spawnEnv = {
-      ...process.env,
-      ...launchPlan.env,
-    };
+    const spawnEnv: Record<string, string> = Object.fromEntries(
+      Object.entries({ ...process.env, ...launchPlan.env }).filter(([, v]) => v !== undefined),
+    ) as Record<string, string>;
 
     const proc = this.launcher(launchPlan.command, launchPlan.args, {
       cwd: this.projectDir,
