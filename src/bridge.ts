@@ -172,8 +172,13 @@ export class OpenCodeBridge {
     while (Date.now() < deadline) {
       const saved = await readJsonFile<BridgeSnapshot | null>(this.statePath, null);
       if (!saved?.runtime?.active) {
+        this.backend?.close();
         this.registry = new BridgeRegistry(this.projectDir, saved ?? undefined);
         this.serverUrl = saved?.serverUrl;
+        this.started = false;
+        this.ownerRuntime = false;
+        this.backend = undefined;
+        this.client = undefined;
         return this.registry.snapshot();
       }
       await delay(100);
