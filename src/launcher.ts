@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { createSplitPane, buildEnvPrefix, type SplitPaneResult } from './tmux.js';
 
 export type LauncherOptions = {
   cwd: string;
@@ -7,6 +8,19 @@ export type LauncherOptions = {
 };
 
 export type VisibleLauncherKind = 'tmux' | 'terminal-app' | 'linux-terminal';
+
+export type LaunchMode = 'new-window' | 'split-pane' | 'terminal-app' | 'linux-terminal';
+
+export function detectLaunchMode(): LaunchMode {
+  if (process.env.OPENCODE_LAUNCH_MODE === 'split-pane' && process.env.TMUX) {
+    return 'split-pane';
+  }
+  const kind = detectVisibleLauncherKind();
+  if (kind === 'tmux') return 'new-window';
+  if (kind === 'terminal-app') return 'terminal-app';
+  if (kind === 'linux-terminal') return 'linux-terminal';
+  return 'new-window';
+}
 
 export function defaultLauncher(command: string, args: string[], options: LauncherOptions): ChildProcess {
   const shellCommand = buildShellCommand(command, args, options);
@@ -69,6 +83,26 @@ export function detectVisibleLauncherKind(): VisibleLauncherKind | undefined {
     return linuxTerminalLaunchers('worker', '').find((launcher) => hasCommand(launcher.command)) ? 'linux-terminal' : undefined;
   }
   return undefined;
+}
+
+export function splitPaneLauncher(
+  command: string,
+  args: string[],
+  options: LauncherOptions,
+): { paneId: string; target: string; pid?: number } {
+  const shellCommand = buildShellCommand(command, args, options);
+  const result = createSplitPane({
+    direction: 'vertical',
+    percentage: 30,
+    cwd: options.cwd,
+    env: options.env,
+    shellCommand,
+  });
+  // Return a placeholder that keeps the process alive
+  // The actual process is managed by tmux
+  const proc = spawn('sleep', ['infinity'], { detached: true, stdio: 'ignore' });
+  proc.unref();
+  return { paneId: result.paneId, target: result.target, pid: proc.pid };
 }
 
 function linuxTerminalLaunchers(title: string, shellCommand: string): Array<{ command: string; args: string[] }> {
