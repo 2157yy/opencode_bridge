@@ -1,12 +1,22 @@
-import { execFile, spawn, execFileSync, spawnSync, type ChildProcess } from 'node:child_process';
+/**
+ * src/tmux.ts
+ *
+ * Low-level tmux operations for opencode_bridge.
+ * All tmux commands are executed via runTmux() / runTmuxAsync() wrappers.
+ *
+ * Per PRD_TMUX_INTEGRATION.md §3.
+ */
+
+import { spawnSync, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type TmuxResult =
-  | { ok: true; stdout: string }
-  | { ok: false; stderr: string };
+export type TmuxResult = { ok: true; stdout: string } | { ok: false; stderr: string };
 
 export interface TmuxPaneInfo {
   paneId: string;
@@ -43,129 +53,92 @@ export interface SplitPaneResult {
 }
 
 // ---------------------------------------------------------------------------
-// ANSI normalization helpers
+// Module-level cache
 // ---------------------------------------------------------------------------
 
-const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-9;]*[A-Za-z])/g;
+let _cachedTmuxAvailable: boolean | undefined;
 
-export function normalizeCapture(raw: string): string {
-  return raw.replace(ANSI_RE, '').trim();
-}
-
-// ---------------------------------------------------------------------------
-// Utility
-// ---------------------------------------------------------------------------
-
-export function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
-}
-
-export function buildEnvPrefix(env?: NodeJS.ProcessEnv): string {
-  if (!env) return '';
-  const entries = Object.entries(env).filter(([, v]) => v !== undefined);
-  return entries.map(([key, value]) => `${key}=${shellQuote(String(value))}`).join(' ');
-}
-
-export function delay(ms: number): Promise<void> {
-  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+export function _resetCache(): void {
+  _cachedTmuxAvailable = undefined;
 }
 
 // ---------------------------------------------------------------------------
 // Environment detection
 // ---------------------------------------------------------------------------
 
-let cachedTmuxAvailable: boolean | undefined;
-
+/**
+ * Detect whether the `tmux` binary is available.
+ * Result is cached after first call.
+ */
 export function isTmuxAvailable(): boolean {
-  if (cachedTmuxAvailable !== undefined) {
-    return cachedTmuxAvailable;
+  if (_cachedTmuxAvailable !== undefined) return _cachedTmuxAvailable;
+  const result = spawnSync('tmux', ['-V'], { encoding: 'utf-8' });
+  if (result.error) {
+    _cachedTmuxAvailable = false;
+    return false;
   }
-  try {
-    const result = spawnSync('tmux', ['-V'], { encoding: 'utf-8' });
-    cachedTmuxAvailable = result.status === 0;
-  } catch {
-    cachedTmuxAvailable = false;
-  }
-  return cachedTmuxAvailable;
+  _cachedTmuxAvailable = result.status === 0;
+  return _cachedTmuxAvailable;
 }
 
+/**
+ * Detect whether the current process is running inside a tmux session.
+ */
 export function isInsideTmux(): boolean {
-  return Boolean(process.env.TMUX && process.env.TMUX.trim().length > 0);
+  return Boolean(process.env.TMUX);
 }
 
+/**
+ * Get the current tmux session name, or null if unavailable.
+ */
 export function getCurrentSessionName(): string | null {
-  if (!isInsideTmux()) return null;
-  try {
-    const result = spawnSync('tmux', ['display-message', '-p', '#S'], { encoding: 'utf-8' });
-    if (result.status !== 0) return null;
-    const name = (result.stdout || '').trim();
-    return name || null;
-  } catch {
-    return null;
-  }
+  if (!process.env.TMUX) return null;
+  const result = runTmux(['display-message', '-p', '#S']);
+  if (!result.ok) return null;
+  return result.stdout || null;
 }
 
+/**
+ * Get the current tmux pane ID (e.g. "%0"), or null if unavailable.
+ * Checks TMUX_PANE env var first, then falls back to tmux display-message.
+ */
 export function getCurrentPaneId(): string | null {
-  // Fast path: TMUX_PANE env var is set
   const envPane = process.env.TMUX_PANE;
-  if (envPane && /^%\d+$/.test(envPane)) {
-    return envPane;
-  }
-  // Fallback: query tmux
-  if (!isInsideTmux()) return null;
-  try {
-    const result = spawnSync('tmux', ['display-message', '-p', '#{pane_id}'], { encoding: 'utf-8' });
-    if (result.status !== 0) return null;
-    const paneId = (result.stdout || '').trim();
-    return paneId.startsWith('%') ? paneId : null;
-  } catch {
-    return null;
-  }
+  if (envPane && /^%\d+$/.test(envPane)) return envPane;
+  const result = runTmux(['display-message', '-p', '#{pane_id}']);
+  if (!result.ok) return null;
+  return result.stdout || null;
 }
 
 // ---------------------------------------------------------------------------
-// Core execution
+// Low-level execution
 // ---------------------------------------------------------------------------
 
+/**
+ * Synchronously execute a tmux subcommand.
+ */
 export function runTmux(args: string[]): TmuxResult {
-  try {
-    const result = spawnSync('tmux', args, { encoding: 'utf-8' });
-    if (result.error) {
-      return { ok: false, stderr: result.error.message };
-    }
-    if (result.status !== 0) {
-      return { ok: false, stderr: (result.stderr || '').trim() || `tmux exited ${result.status}` };
-    }
-    return { ok: true, stdout: (result.stdout || '').trim() };
-  } catch (error) {
-    return { ok: false, stderr: error instanceof Error ? error.message : String(error) };
+  const result = spawnSync('tmux', args, { encoding: 'utf-8' });
+  if (result.error) {
+    return { ok: false, stderr: result.error.message };
   }
+  if (result.status !== 0) {
+    return { ok: false, stderr: (result.stderr || '').trim() || `tmux exited ${result.status}` };
+  }
+  return { ok: true, stdout: (result.stdout || '').trim() };
 }
 
+/**
+ * Asynchronously execute a tmux subcommand.
+ */
 export async function runTmuxAsync(args: string[]): Promise<TmuxResult> {
   return new Promise((resolve) => {
-    const proc = spawn('tmux', args);
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        resolve({ ok: false, stderr: stderr.trim() || `tmux exited ${code}` });
-      } else {
-        resolve({ ok: true, stdout: stdout.trim() });
+    execFile('tmux', args, { encoding: 'utf-8' }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({ ok: false, stderr: error.message });
+        return;
       }
-    });
-
-    proc.on('error', (error) => {
-      resolve({ ok: false, stderr: error.message });
+      resolve({ ok: true, stdout: (stdout || '').trim() });
     });
   });
 }
@@ -174,18 +147,26 @@ export async function runTmuxAsync(args: string[]): Promise<TmuxResult> {
 // Session management
 // ---------------------------------------------------------------------------
 
+/**
+ * List all tmux session names. Returns empty array on failure.
+ */
 export function listSessions(): string[] {
   const result = runTmux(['list-sessions', '-F', '#{session_name}']);
   if (!result.ok) return [];
-  if (!result.stdout) return [];
-  return result.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  return result.stdout.split('\n').filter(Boolean);
 }
 
+/**
+ * Check whether a tmux session with the given name exists.
+ */
 export function hasSession(name: string): boolean {
   const result = runTmux(['has-session', '-t', name]);
   return result.ok;
 }
 
+/**
+ * Kill a tmux session. Returns true on success, false on failure.
+ */
 export function killSession(name: string): boolean {
   const result = runTmux(['kill-session', '-t', name]);
   return result.ok;
@@ -195,35 +176,45 @@ export function killSession(name: string): boolean {
 // Pane management
 // ---------------------------------------------------------------------------
 
+/**
+ * List tmux panes. Returns empty array on failure.
+ */
 export function listPanes(target?: string): TmuxPaneInfo[] {
-  const args = target
-    ? ['list-panes', '-t', target, '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_start_command}\t#{session_name}\t#{window_index}\t#{pane_width}\t#{pane_height}']
-    : ['list-panes', '-F', '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_start_command}\t#{session_name}\t#{window_index}\t#{pane_width}\t#{pane_height}'];
-
-  const result = runTmux(args);
+  const targetArg = target ? ['-t', target] : [];
+  const result = runTmux([
+    'list-panes',
+    ...targetArg,
+    '-F',
+    '#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_start_command}\t#{session_name}\t#{window_index}\t#{pane_width}\t#{pane_height}',
+  ]);
   if (!result.ok) return [];
 
   return result.stdout
     .split('\n')
-    .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
-      const [paneId, panePid, currentCommand, startCommand, sessionName, windowIndex, paneWidth, paneHeight] = line.split('\t');
+      const parts = line.split('\t');
+      const [paneId, panePid, currentCommand, startCommand, sessionName, windowIndex, paneWidth, paneHeight] = parts;
+      if (!paneId || !sessionName) return null;
       return {
-        paneId: paneId || '',
-        panePid: Number.parseInt(panePid || '0', 10),
-        currentCommand: currentCommand || '',
-        startCommand: startCommand || '',
-        sessionName: sessionName || '',
-        windowIndex: Number.parseInt(windowIndex || '0', 10),
-        paneWidth: Number.parseInt(paneWidth || '0', 10),
-        paneHeight: Number.parseInt(paneHeight || '0', 10),
-      };
+        paneId,
+        panePid: parseInt(panePid ?? '0', 10),
+        currentCommand: currentCommand ?? '',
+        startCommand: startCommand ?? '',
+        sessionName,
+        windowIndex: parseInt(windowIndex ?? '0', 10),
+        paneWidth: parseInt(paneWidth ?? '0', 10),
+        paneHeight: parseInt(paneHeight ?? '0', 10),
+      } satisfies TmuxPaneInfo;
     })
-    .filter((p) => p.paneId.startsWith('%'))
+    .filter((p): p is TmuxPaneInfo => p !== null)
     .sort((a, b) => a.paneId.localeCompare(b.paneId));
 }
 
+/**
+ * Create a new split pane in the current tmux window.
+ * Throws if not inside tmux or if tmux command fails.
+ */
 export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
   if (!isInsideTmux() || !isTmuxAvailable()) {
     throw new Error('tmux is not available or not inside a tmux session');
@@ -232,6 +223,7 @@ export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
   const dirFlag = options.direction === 'horizontal' ? '-h' : '-v';
   const detached = options.detached !== false ? ['-d'] : [];
 
+  // Size args
   const sizeArgs: string[] = [];
   if (options.size != null) {
     sizeArgs.push('-l', String(options.size));
@@ -239,10 +231,14 @@ export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
     sizeArgs.push('-p', String(options.percentage));
   }
 
+  // Environment prefix
   const envPrefix = buildEnvPrefix(options.env);
 
+  // Shell command
   const command = options.shellCommand
-    ? (envPrefix ? `${envPrefix} ${options.shellCommand}` : options.shellCommand)
+    ? envPrefix
+      ? `${envPrefix} ${options.shellCommand}`
+      : options.shellCommand
     : undefined;
 
   const args = [
@@ -250,8 +246,11 @@ export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
     dirFlag,
     ...sizeArgs,
     ...detached,
-    '-c', options.cwd,
-    '-P', '-F', '#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}',
+    '-c',
+    options.cwd,
+    '-P',
+    '-F',
+    '#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}',
     ...(command ? [command] : []),
   ];
 
@@ -260,10 +259,7 @@ export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
     throw new Error(`createSplitPane failed: ${result.stderr}`);
   }
 
-  const parts = result.stdout.split('\t');
-  const paneId = parts[0] ?? '';
-  const target = parts[1] ?? '';
-
+  const [paneId, target] = result.stdout.split('\t');
   if (!paneId?.startsWith('%')) {
     throw new Error(`createSplitPane: unexpected output: ${result.stdout}`);
   }
@@ -271,41 +267,39 @@ export function createSplitPane(options: SplitPaneOptions): SplitPaneResult {
   return { paneId, target };
 }
 
+/**
+ * Kill a tmux pane. Returns true on success, false on failure.
+ * Returns false if paneId does not start with '%'.
+ */
 export function killPane(paneId: string): boolean {
   if (!paneId.startsWith('%')) return false;
   const result = runTmux(['kill-pane', '-t', paneId]);
   return result.ok;
 }
 
+/**
+ * Check whether a tmux pane is alive.
+ * A pane is alive if pane_dead=0 and the process is still running.
+ */
 export function isPaneAlive(paneId: string): boolean {
-  if (!paneId.startsWith('%')) return false;
+  const result = runTmux(['list-panes', '-t', paneId, '-F', '#{pane_dead} #{pane_pid}']);
+  if (!result.ok) return false;
+  const [deadStr, pidStr] = result.stdout.split(' ');
+  if (deadStr === '1') return false;
+  const pid = parseInt(pidStr, 10);
+  if (!pid || pid === 0) return false;
   try {
-    const result = spawnSync('tmux', ['list-panes', '-t', paneId, '-F', '#{pane_dead}'], { encoding: 'utf-8' });
-    if (result.status !== 0) return false;
-    const output = (result.stdout || '').trim();
-    if (output === '1') return false;
-    if (output === '0') {
-      // Check if process is actually alive using pane_pid
-      const pidResult = spawnSync('tmux', ['list-panes', '-t', paneId, '-F', '#{pane_pid}'], { encoding: 'utf-8' });
-      const pid = Number.parseInt((pidResult.stdout || '').trim(), 10);
-      if (Number.isFinite(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0);
-          return true;
-        } catch {
-          return false;
-        }
-      }
-      return false;
-    }
-    return false;
+    process.kill(pid, 0);
+    return true;
   } catch {
     return false;
   }
 }
 
+/**
+ * Resize a tmux pane to the given height (rows).
+ */
 export function resizePane(paneId: string, height: number): boolean {
-  if (!paneId.startsWith('%')) return false;
   const result = runTmux(['resize-pane', '-t', paneId, '-y', String(height)]);
   return result.ok;
 }
@@ -314,6 +308,9 @@ export function resizePane(paneId: string, height: number): boolean {
 // Input injection
 // ---------------------------------------------------------------------------
 
+/**
+ * Send keys / text to a tmux pane.
+ */
 export function sendKeys(options: SendKeysOptions): TmuxResult {
   const { target, text, enter = true, literal = true } = options;
 
@@ -332,28 +329,19 @@ export function sendKeys(options: SendKeysOptions): TmuxResult {
   return textResult;
 }
 
+/**
+ * Asynchronous version of sendKeys.
+ */
 export async function sendKeysAsync(options: SendKeysOptions): Promise<TmuxResult> {
-  const { target, text, enter = true, literal = true, delayBeforeMs } = options;
-
-  if (delayBeforeMs && delayBeforeMs > 0) {
-    await delay(delayBeforeMs);
+  if (options.delayBeforeMs && options.delayBeforeMs > 0) {
+    await delay(options.delayBeforeMs);
   }
-
-  const textArgs = literal
-    ? ['send-keys', '-t', target, '-l', '--', text]
-    : ['send-keys', '-t', target, '--', text];
-
-  const textResult = await runTmuxAsync(textArgs);
-  if (!textResult.ok) return textResult;
-
-  if (enter) {
-    const enterResult = await runTmuxAsync(['send-keys', '-t', target, 'C-m']);
-    if (!enterResult.ok) return enterResult;
-  }
-
-  return textResult;
+  return sendKeys(options);
 }
 
+/**
+ * Convenience: inject a full command into a pane and press Enter.
+ */
 export async function injectCommand(target: string, command: string, delayMs?: number): Promise<TmuxResult> {
   return sendKeysAsync({ target, text: command, enter: true, delayBeforeMs: delayMs });
 }
@@ -362,12 +350,24 @@ export async function injectCommand(target: string, command: string, delayMs?: n
 // Output capture
 // ---------------------------------------------------------------------------
 
-export function capturePane(target: string, lines: number = 50): string | null {
+const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-9;]*[A-Za-z])/g;
+
+function normalizeCapture(raw: string): string {
+  return raw.replace(ANSI_RE, '').trim();
+}
+
+/**
+ * Capture the last N lines of pane output (includes scrollback).
+ */
+export function capturePane(target: string, lines = 50): string | null {
   const result = runTmux(['capture-pane', '-t', target, '-p', '-S', `-${lines}`]);
   if (!result.ok) return null;
   return result.stdout;
 }
 
+/**
+ * Capture only the visible portion of the pane (no scrollback).
+ */
 export function captureVisiblePane(target: string): string | null {
   const result = runTmux(['capture-pane', '-t', target, '-p']);
   if (!result.ok) return null;
@@ -385,23 +385,55 @@ function defaultReadinessCheck(capture: string): boolean {
   return /[>$#]\s*$/.test(normalized) || /ready/i.test(normalized) || normalized.length > 50;
 }
 
+/**
+ * Poll a pane until readinessCheck returns true, or timeout is reached.
+ * Uses exponential backoff starting at 150ms, doubling each time, max 2000ms.
+ */
 export async function waitForPaneReady(
   target: string,
-  timeoutMs: number = 30_000,
+  timeoutMs = 30_000,
   readinessCheck: (capture: string) => boolean = defaultReadinessCheck,
 ): Promise<boolean> {
   const start = Date.now();
-  let intervalMs = 150;
-  const maxIntervalMs = 2000;
+  let interval = 150;
 
   while (Date.now() - start < timeoutMs) {
     const capture = captureVisiblePane(target);
-    if (capture && readinessCheck(capture)) {
+    if (capture != null && readinessCheck(capture)) {
       return true;
     }
-    await delay(intervalMs);
-    intervalMs = Math.min(intervalMs * 2, maxIntervalMs);
+    await delay(interval);
+    interval = Math.min(interval * 2, 2000);
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Shell single-quote escaping: wraps value in single quotes,
+ * escaping internal single quotes via '\''.
+ * Example: "it's" → "'it'\"'\"'s'"
+ */
+export function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+/**
+ * Convert a process env object to a shell environment variable prefix string.
+ * Example: { FOO: 'bar', BAZ: 'qux' } → "FOO='bar' BAZ='qux'"
+ * Undefined values are skipped.
+ */
+export function buildEnvPrefix(env?: NodeJS.ProcessEnv): string {
+  if (!env) return '';
+  const entries = Object.entries(env).filter(([, value]) => value !== undefined);
+  return entries.map(([key, value]) => `${key}=${shellQuote(String(value))}`).join(' ');
+}
+
+/** Promise-based delay */
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

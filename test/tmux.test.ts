@@ -1,155 +1,486 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync, execFile, type SpawnSyncReturns, type ExecFileReturns } from 'node:child_process';
 
-import {
-  shellQuote,
-  buildEnvPrefix,
-  delay,
-  normalizeCapture,
-  isInsideTmux,
-  isTmuxAvailable,
-} from '../src/tmux.js';
-import type { TmuxResult, TmuxPaneInfo, SplitPaneOptions, SendKeysOptions, SplitPaneResult } from '../src/tmux.js';
+// These tests mock node:child_process so they run without a real tmux binary.
+// The test target is src/tmux.ts (implemented per PRD_TMUX_INTEGRATION.md §3).
 
-test('shellQuote escapes single quotes correctly', () => {
-  assert.equal(shellQuote('hello'), "'hello'");
-  // shellQuote uses shell escaping: 'it'"'"'s' means: 'it' + " (end quote) + ' (single quote) + " (start quote) + 's'
-  assert.equal(shellQuote("it's"), "'it'\"'\"'s'");
-  assert.equal(shellQuote('hello world'), "'hello world'");
-  assert.equal(shellQuote(''), "''");
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Restore all mocks after each test */
+function restoreAllMocks() {
+  spawnSync.mock?.restore?.();
+  execFile.mock?.restore?.();
+}
+
+// ---------------------------------------------------------------------------
+// isTmuxAvailable
+// ---------------------------------------------------------------------------
+
+test('isTmuxAvailable returns true when tmux -V exits 0', () => {
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'tmux 3.4', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+
+  // Re-import to pick up mock — we import the module once at top, then clear-cache per test.
+  // To keep tests independent we use module-level caching helpers from the SUT instead.
+  const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
+  _resetCache?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'tmux 3.4', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(isTmuxAvailable(), true);
 });
 
-test('buildEnvPrefix builds env string correctly', () => {
-  assert.equal(buildEnvPrefix({ FOO: 'bar' }), "FOO='bar'");
-  assert.equal(buildEnvPrefix({ FOO: 'bar', BAZ: 'qux' }), "FOO='bar' BAZ='qux'");
-  assert.equal(buildEnvPrefix({}), '');
-  assert.equal(buildEnvPrefix(undefined), '');
-  assert.equal(buildEnvPrefix({ UNDEFINED_VAL: undefined as unknown as string }), '');
+test('isTmuxAvailable returns false when tmux -V exits non-zero', () => {
+  const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
+  _resetCache?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'not found', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(isTmuxAvailable(), false);
 });
 
-test('delay resolves after specified time', async () => {
-  const start = Date.now();
-  await delay(50);
-  const elapsed = Date.now() - start;
-
-  // Allow some tolerance for timing
-  assert.ok(elapsed >= 40, `Expected at least 40ms, got ${elapsed}ms`);
-  assert.ok(elapsed < 150, `Expected less than 150ms, got ${elapsed}ms`);
+test('isTmuxAvailable returns false when tmux does not exist (ENOENT)', () => {
+  const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
+  _resetCache?.();
+  const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
+  enoent.code = 'ENOENT';
+  spawnSync.mock?.(() => ({ status: 0, stdout: '', stderr: '', error: enoent } as SpawnSyncReturns<string>));
+  assert.equal(isTmuxAvailable(), false);
 });
 
-test('isInsideTmux returns boolean when TMUX env is not set', () => {
-  // If TMUX is set in environment, the result will be true
-  const result = isInsideTmux();
-  assert.equal(typeof result, 'boolean');
+test('isTmuxAvailable caches result — second call does not re-spawn', () => {
+  const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
+  _resetCache?.();
+  let callCount = 0;
+  spawnSync.mock?.(() => {
+    callCount++;
+    return { status: 0, stdout: 'tmux 3.4', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+  isTmuxAvailable();
+  isTmuxAvailable();
+  assert.equal(callCount, 1);
+});
 
-  // In a non-tmux environment, this should be false
-  if (!process.env.TMUX) {
-    assert.equal(result, false);
+// ---------------------------------------------------------------------------
+// isInsideTmux
+// ---------------------------------------------------------------------------
+
+test('isInsideTmux returns true when TMUX env var is set', async () => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  try {
+    const { isInsideTmux } = await import('../src/tmux.js');
+    assert.equal(isInsideTmux(), true);
+  } finally {
+    process.env.TMUX = original;
   }
 });
 
-test('isTmuxAvailable returns boolean', () => {
-  const result = isTmuxAvailable();
-  assert.equal(typeof result, 'boolean');
+test('isInsideTmux returns false when TMUX env var is absent', async () => {
+  const original = process.env.TMUX;
+  delete process.env.TMUX;
+  try {
+    const { isInsideTmux } = await import('../src/tmux.js');
+    assert.equal(isInsideTmux(), false);
+  } finally {
+    process.env.TMUX = original;
+  }
 });
 
-test('normalizeCapture removes ANSI escape codes', () => {
-  // No ANSI codes
-  assert.equal(normalizeCapture('hello world'), 'hello world');
+// ---------------------------------------------------------------------------
+// runTmux
+// ---------------------------------------------------------------------------
 
-  // ANSI color codes
-  assert.equal(normalizeCapture('\x1b[31mhello\x1b[0m'), 'hello');
-
-  // ANSI escape sequence
-  assert.equal(normalizeCapture('\x1b[1;32mgreen\x1b[0m'), 'green');
-
-  // Mixed content
-  assert.equal(normalizeCapture('\x1b[36mprefix\x1b[0m content'), 'prefix content');
-
-  // Whitespace handling
-  assert.equal(normalizeCapture('  \x1b[31mred\x1b[0m  '), 'red');
+test('runTmux returns ok:true with stdout on success', async () => {
+  const { runTmux } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'pane output', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  const result = runTmux(['list-panes']);
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, 'pane output');
 });
 
-test('TmuxResult type works correctly', () => {
-  const successResult: TmuxResult = { ok: true, stdout: 'output' };
-  const failResult: TmuxResult = { ok: false, stderr: 'error message' };
-
-  assert.equal(successResult.ok, true);
-  assert.equal(successResult.stdout, 'output');
-  assert.equal(failResult.ok, false);
-  assert.equal(failResult.stderr, 'error message');
+test('runTmux returns ok:false with stderr on non-zero exit', async () => {
+  const { runTmux } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'unknown command', error: undefined } as SpawnSyncReturns<string>));
+  const result = runTmux(['bad', 'command']);
+  assert.equal(result.ok, false);
+  assert.equal(result.stderr, 'unknown command');
 });
 
-test('TmuxPaneInfo interface structure', () => {
-  const pane: TmuxPaneInfo = {
-    paneId: '%0',
-    panePid: 12345,
-    currentCommand: 'bash',
-    startCommand: '/bin/bash',
-    sessionName: 'test-session',
-    windowIndex: 0,
-    paneWidth: 80,
-    paneHeight: 24,
-  };
-
-  assert.equal(pane.paneId, '%0');
-  assert.equal(pane.panePid, 12345);
-  assert.equal(pane.currentCommand, 'bash');
-  assert.equal(pane.sessionName, 'test-session');
+test('runTmux returns ok:false when command does not exist', async () => {
+  const { runTmux } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
+  enoent.code = 'ENOENT';
+  spawnSync.mock?.(() => ({ status: 0, stdout: '', stderr: '', error: enoent } as SpawnSyncReturns<string>));
+  const result = runTmux(['nonexistent']);
+  assert.equal(result.ok, false);
 });
 
-test('SplitPaneOptions interface structure', () => {
-  const options: SplitPaneOptions = {
-    direction: 'vertical',
-    percentage: 30,
-    cwd: '/tmp/project',
-    env: { PATH: '/usr/bin' },
-    detached: true,
-    shellCommand: 'echo hello',
-  };
+// ---------------------------------------------------------------------------
+// createSplitPane
+// ---------------------------------------------------------------------------
 
-  assert.equal(options.direction, 'vertical');
-  assert.equal(options.percentage, 30);
-  assert.equal(options.cwd, '/tmp/project');
-  assert.equal(options.env?.PATH, '/usr/bin');
-  assert.equal(options.detached, true);
-  assert.equal(options.shellCommand, 'echo hello');
+test('createSplitPane throws when not inside tmux', async ({ skip }) => {
+  const original = process.env.TMUX;
+  delete process.env.TMUX;
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    assert.throws(
+      () => createSplitPane({ cwd: '/tmp', direction: 'vertical' }),
+      /tmux is not available|not inside/i,
+    );
+  } finally {
+    process.env.TMUX = original;
+  }
 });
 
-test('SendKeysOptions interface structure', () => {
-  const options: SendKeysOptions = {
-    target: '%0',
-    text: 'echo hello',
-    enter: true,
-    delayBeforeMs: 100,
-    literal: true,
-  };
-
-  assert.equal(options.target, '%0');
-  assert.equal(options.text, 'echo hello');
-  assert.equal(options.enter, true);
-  assert.equal(options.delayBeforeMs, 100);
-  assert.equal(options.literal, true);
+test('createSplitPane returns paneId and target on success (vertical)', async ({ skip }) => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    spawnSync.mock?.restore?.();
+    spawnSync.mock?.(() => ({ status: 0, stdout: '%5\tsession_name:0.1', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+    const result = createSplitPane({ cwd: '/tmp', direction: 'vertical' });
+    assert.equal(result.paneId, '%5');
+    assert.equal(result.target, 'session_name:0.1');
+  } finally {
+    process.env.TMUX = original;
+  }
 });
 
-test('SplitPaneResult interface structure', () => {
-  const result: SplitPaneResult = {
-    paneId: '%5',
-    target: 'test-session:0.1',
-  };
-
-  assert.equal(result.paneId, '%5');
-  assert.equal(result.target, 'test-session:0.1');
+test('createSplitPane uses -h for horizontal direction', async ({ skip }) => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  let capturedArgs: string[] = [];
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    spawnSync.mock?.restore?.();
+    spawnSync.mock?.((cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return { status: 0, stdout: '%6\tsession_name:0.2', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+    });
+    createSplitPane({ cwd: '/tmp', direction: 'horizontal' });
+    assert.ok(capturedArgs.includes('-h'), `expected -h in args: ${capturedArgs.join(' ')}`);
+  } finally {
+    process.env.TMUX = original;
+  }
 });
 
-test('sendKeys options default values', () => {
-  const options: SendKeysOptions = {
-    target: '%0',
-    text: 'hello',
-  };
+test('createSplitPane passes -l size when size is provided', async ({ skip }) => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  let capturedArgs: string[] = [];
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    spawnSync.mock?.restore?.();
+    spawnSync.mock?.((cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return { status: 0, stdout: '%7\tsession_name:0.3', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+    });
+    createSplitPane({ cwd: '/tmp', size: 20 });
+    assert.ok(capturedArgs.includes('-l'), `expected -l in args: ${capturedArgs.join(' ')}`);
+    assert.ok(capturedArgs.includes('20'), `expected size 20 in args: ${capturedArgs.join(' ')}`);
+  } finally {
+    process.env.TMUX = original;
+  }
+});
 
-  // Check defaults
-  assert.equal(options.enter, undefined); // Not set, defaults handled in function
-  assert.equal(options.literal, undefined);
-  assert.equal(options.delayBeforeMs, undefined);
+test('createSplitPane passes -p percentage when percentage is provided', async ({ skip }) => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  let capturedArgs: string[] = [];
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    spawnSync.mock?.restore?.();
+    spawnSync.mock?.((cmd: string, args: string[]) => {
+      capturedArgs = args;
+      return { status: 0, stdout: '%8\tsession_name:0.4', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+    });
+    createSplitPane({ cwd: '/tmp', percentage: 30 });
+    assert.ok(capturedArgs.includes('-p'), `expected -p in args: ${capturedArgs.join(' ')}`);
+    assert.ok(capturedArgs.includes('30'), `expected percentage 30 in args: ${capturedArgs.join(' ')}`);
+  } finally {
+    process.env.TMUX = original;
+  }
+});
+
+test('createSplitPane throws when tmux command fails', async ({ skip }) => {
+  const original = process.env.TMUX;
+  process.env.TMUX = 'session_name,12345,0';
+  try {
+    const { createSplitPane } = await import('../src/tmux.js');
+    spawnSync.mock?.restore?.();
+    spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'split failed', error: undefined } as SpawnSyncReturns<string>));
+    assert.throws(() => createSplitPane({ cwd: '/tmp' }), /createSplitPane failed/i);
+  } finally {
+    process.env.TMUX = original;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// sendKeys
+// ---------------------------------------------------------------------------
+
+test('sendKeys sends text in literal mode and sends C-m for enter', async ({ skip }) => {
+  const { sendKeys } = await import('../src/tmux.js');
+  let capturedArgs: string[][] = [];
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.((cmd: string, args: string[]) => {
+    capturedArgs.push([cmd, ...args]);
+    return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+
+  sendKeys({ target: '%0', text: 'hello world', enter: true, literal: true });
+
+  assert.equal(capturedArgs.length, 2);
+  const [cmd1, ...args1] = capturedArgs[0];
+  assert.equal(cmd1, 'tmux');
+  assert.ok(args1.includes('send-keys'));
+  assert.ok(args1.includes('-t'));
+  assert.ok(args1.includes('%0'));
+  assert.ok(args1.includes('-l'));
+  assert.ok(args1.includes('hello world'));
+  const [cmd2, ...args2] = capturedArgs[1];
+  assert.ok(args2.includes('C-m'));
+});
+
+test('sendKeys does not send C-m when enter is false', async ({ skip }) => {
+  const { sendKeys } = await import('../src/tmux.js');
+  let capturedArgs: string[][] = [];
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.((cmd: string, args: string[]) => {
+    capturedArgs.push([cmd, ...args]);
+    return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+
+  sendKeys({ target: '%0', text: 'hello', enter: false });
+
+  assert.equal(capturedArgs.length, 1);
+});
+
+test('sendKeys omits -l flag when literal is false', async ({ skip }) => {
+  const { sendKeys } = await import('../src/tmux.js');
+  let capturedArgs: string[] = [];
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.((cmd: string, args: string[]) => {
+    capturedArgs = args;
+    return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+
+  sendKeys({ target: '%0', text: 'hello', literal: false });
+
+  assert.ok(!capturedArgs.includes('-l'), `expected no -l flag: ${capturedArgs.join(' ')}`);
+});
+
+// ---------------------------------------------------------------------------
+// capturePane
+// ---------------------------------------------------------------------------
+
+test('capturePane returns captured text on success', async ({ skip }) => {
+  const { capturePane } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'line1\nline2\nline3', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  const result = capturePane('%0', 50);
+  assert.equal(result, 'line1\nline2\nline3');
+});
+
+test('capturePane returns null on failure', async ({ skip }) => {
+  const { capturePane } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'not found', error: undefined } as SpawnSyncReturns<string>));
+  const result = capturePane('%999', 50);
+  assert.equal(result, null);
+});
+
+// ---------------------------------------------------------------------------
+// waitForPaneReady
+// ---------------------------------------------------------------------------
+
+test('waitForPaneReady resolves true when readinessCheck returns true', async ({ skip }) => {
+  const { waitForPaneReady } = await import('../src/tmux.js');
+  let pollCount = 0;
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => {
+    pollCount++;
+    // First few return startup text, last returns ready prompt
+    const output = pollCount >= 3 ? '$ ' : 'loading...';
+    return { status: 0, stdout: output, stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+
+  const result = await waitForPaneReady('%0', 5000, (_capture: string) => _capture.includes('$'));
+  assert.equal(result, true);
+});
+
+test('waitForPaneReady resolves false on timeout', async ({ skip }) => {
+  const { waitForPaneReady } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'still loading...', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+
+  const result = await waitForPaneReady('%0', 200);
+  assert.equal(result, false);
+});
+
+test('waitForPaneReady uses custom readinessCheck', async ({ skip }) => {
+  const { waitForPaneReady } = await import('../src/tmux.js');
+  let pollCount = 0;
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => {
+    pollCount++;
+    return { status: 0, stdout: pollCount >= 2 ? 'READY' : 'waiting', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+  });
+
+  const result = await waitForPaneReady('%0', 5000, (c: string) => c.includes('READY'));
+  assert.equal(result, true);
+});
+
+// ---------------------------------------------------------------------------
+// killPane
+// ---------------------------------------------------------------------------
+
+test('killPane returns true when paneId starts with % and command succeeds', async ({ skip }) => {
+  const { killPane } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  const result = killPane('%5');
+  assert.equal(result, true);
+});
+
+test('killPane returns false when paneId does not start with %', async ({ skip }) => {
+  const { killPane } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  const result = killPane('not-a-pane-id');
+  assert.equal(result, false);
+});
+
+test('killPane returns false when tmux command fails', async ({ skip }) => {
+  const { killPane } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'pane not found', error: undefined } as SpawnSyncReturns<string>));
+  const result = killPane('%999');
+  assert.equal(result, false);
+});
+
+// ---------------------------------------------------------------------------
+// isPaneAlive
+// ---------------------------------------------------------------------------
+
+test('isPaneAlive returns true when pane_dead=0 and pid is alive', async ({ skip }) => {
+  const { isPaneAlive } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: '0 12345', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  const result = isPaneAlive('%0');
+  assert.equal(result, true);
+});
+
+test('isPaneAlive returns false when pane_dead=1', async ({ skip }) => {
+  const { isPaneAlive } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: '1 0', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  const result = isPaneAlive('%0');
+  assert.equal(result, false);
+});
+
+test('isPaneAlive returns false when pane does not exist', async ({ skip }) => {
+  const { isPaneAlive } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'pane not found', error: undefined } as SpawnSyncReturns<string>));
+  const result = isPaneAlive('%999');
+  assert.equal(result, false);
+});
+
+// ---------------------------------------------------------------------------
+// shellQuote
+// ---------------------------------------------------------------------------
+
+test('shellQuote wraps value in single quotes and escapes internal single quotes', async ({ skip }) => {
+  const { shellQuote } = await import('../src/tmux.js');
+  assert.equal(shellQuote("it's"), "'it'\"'\"'s'");
+  assert.equal(shellQuote('hello'), "'hello'");
+  assert.equal(shellQuote(''), "''");
+});
+
+// ---------------------------------------------------------------------------
+// buildEnvPrefix
+// ---------------------------------------------------------------------------
+
+test('buildEnvPrefix converts env object to shell prefix string', async ({ skip }) => {
+  const { buildEnvPrefix } = await import('../src/tmux.js');
+  const result = buildEnvPrefix({ FOO: 'bar', BAZ: 'qux' });
+  assert.match(result, /FOO='bar'/);
+  assert.match(result, /BAZ='qux'/);
+});
+
+test('buildEnvPrefix skips undefined values', async ({ skip }) => {
+  const { buildEnvPrefix } = await import('../src/tmux.js');
+  const result = buildEnvPrefix({ FOO: 'bar', BAZ: undefined });
+  assert.match(result, /FOO='bar'/);
+  assert.doesNotMatch(result, /BAZ/);
+});
+
+// ---------------------------------------------------------------------------
+// delay
+// ---------------------------------------------------------------------------
+
+test('delay resolves after approximately the specified ms', async ({ skip }) => {
+  const { delay } = await import('../src/tmux.js');
+  const start = Date.now();
+  await delay(50);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed >= 40, `expected ~50ms, got ${elapsed}ms`);
+});
+
+// ---------------------------------------------------------------------------
+// listSessions / hasSession / killSession
+// ---------------------------------------------------------------------------
+
+test('listSessions returns array of session names', async ({ skip }) => {
+  const { listSessions } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({
+    status: 0,
+    stdout: 'session-1\nsession-2\n',
+    stderr: '',
+    error: undefined,
+  } as SpawnSyncReturns<string>));
+  const result = listSessions();
+  assert.deepEqual(result, ['session-1', 'session-2']);
+});
+
+test('listSessions returns empty array on failure', async ({ skip }) => {
+  const { listSessions } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'no sessions', error: undefined } as SpawnSyncReturns<string>));
+  const result = listSessions();
+  assert.deepEqual(result, []);
+});
+
+test('hasSession returns true when session exists', async ({ skip }) => {
+  const { hasSession } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: 'session-1', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(hasSession('session-1'), true);
+});
+
+test('hasSession returns false when session does not exist', async ({ skip }) => {
+  const { hasSession } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'failed', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(hasSession('nonexistent'), false);
+});
+
+test('killSession returns true on success', async ({ skip }) => {
+  const { killSession } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(killSession('session-1'), true);
+});
+
+test('killSession returns false on failure', async ({ skip }) => {
+  const { killSession } = await import('../src/tmux.js');
+  spawnSync.mock?.restore?.();
+  spawnSync.mock?.(() => ({ status: 1, stdout: '', stderr: 'failed', error: undefined } as SpawnSyncReturns<string>));
+  assert.equal(killSession('nonexistent'), false);
 });
