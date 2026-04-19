@@ -4,9 +4,10 @@ import { resolve } from 'node:path';
 import type { Session, SessionStatus } from '@opencode-ai/sdk';
 import { readJsonFile, writeJsonFile } from './store.js';
 import { BridgeRegistry, type AgentRecord, type BridgeSnapshot, type LlmConfig } from './registry.js';
-import { createClient, defaultLaunchPlan, startBackend, type BackendHandle, type LaunchPlan, type ProcessLauncher } from './opencode.js';
-import { defaultLauncher } from './launcher.js';
+import { createClient, defaultLaunchPlan, startBackend, autoStartCli, type BackendHandle, type LaunchPlan, type ProcessLauncher } from './opencode.js';
+import { defaultLauncher, buildShellCommand } from './launcher.js';
 import { mapSessionStatus, summarizeSessionStatus } from './state-machine.js';
+import { isInsideTmux, isTmuxAvailable, createSplitPane } from './tmux.js';
 
 export type BridgeOptions = {
   projectDir: string;
@@ -28,6 +29,14 @@ export type BridgeOptions = {
   }) => LaunchPlan;
   clock?: () => Date;
   stopWaitMs?: number;
+  /** Use tmux split-pane mode when inside tmux */
+  useSplitPane?: boolean;
+  /** Split pane direction: vertical (default) or horizontal */
+  splitDirection?: 'vertical' | 'horizontal';
+  /** Split pane size as percentage */
+  splitPercentage?: number;
+  /** Automatically inject opencode CLI command into the new pane */
+  autoRoute?: boolean;
 };
 
 export type SpawnAgentOptions = {
@@ -66,6 +75,10 @@ export class OpenCodeBridge {
   }) => LaunchPlan;
   private readonly clock: () => Date;
   private readonly stopWaitMs: number;
+  private readonly useSplitPane: boolean;
+  private readonly splitDirection: 'vertical' | 'horizontal';
+  private readonly splitPercentage: number;
+  private readonly autoRoute: boolean;
 
   private registry: BridgeRegistry;
   private backend?: BackendHandle;
@@ -85,6 +98,10 @@ export class OpenCodeBridge {
     this.launchPlanFactory = options.launchPlanFactory ?? defaultLaunchPlan;
     this.clock = options.clock ?? (() => new Date());
     this.stopWaitMs = options.stopWaitMs ?? 5_000;
+    this.useSplitPane = options.useSplitPane ?? false;
+    this.splitDirection = options.splitDirection ?? 'vertical';
+    this.splitPercentage = options.splitPercentage ?? 25;
+    this.autoRoute = options.autoRoute ?? false;
     this.registry = new BridgeRegistry(this.projectDir);
   }
 
@@ -216,6 +233,55 @@ export class OpenCodeBridge {
     const spawnEnv: Record<string, string> = Object.fromEntries(
       Object.entries({ ...process.env, ...launchPlan.env }).filter(([, v]) => v !== undefined),
     ) as Record<string, string>;
+
+    const useSplitPaneMode = this.useSplitPane && isInsideTmux() && isTmuxAvailable();
+
+    if (useSplitPaneMode) {
+      // Use tmux split-pane mode
+      const shellCommand = buildShellCommand(launchPlan.command, launchPlan.args, {
+        cwd: this.projectDir,
+        env: spawnEnv,
+        title: options.name,
+      });
+      const splitResult = createSplitPane({
+        direction: this.splitDirection,
+        percentage: this.splitPercentage,
+        cwd: this.projectDir,
+        env: spawnEnv,
+        shellCommand,
+      });
+      const paneId = splitResult.paneId;
+
+      // Auto-inject CLI command if autoRoute is enabled
+      if (this.autoRoute) {
+        await autoStartCli({
+          paneId,
+          serverUrl: this.serverUrl,
+          sessionId: session.id,
+          projectDir: this.projectDir,
+          env: spawnEnv,
+        });
+      }
+
+      const record = this.registry.register({
+        id: session.id,
+        role,
+        name: options.name,
+        sessionId: session.id,
+        windowId: paneId,
+        parentId: parent?.id ?? undefined,
+        command: launchPlan.command,
+        args: launchPlan.args,
+        status: 'running',
+        phase: 'running',
+        llm: llmConfig,
+        llmConfig,
+        llmEnv: spawnEnv,
+        runtimeId,
+      });
+      await this.persist();
+      return this.requireAgent(record.id);
+    }
 
     const proc = this.launcher(launchPlan.command, launchPlan.args, {
       cwd: this.projectDir,
