@@ -140,18 +140,22 @@ export function listPanes(target) {
         .split('\n')
         .filter(Boolean)
         .map((line) => {
-        const [paneId, panePid, currentCommand, startCommand, sessionName, windowIndex, paneWidth, paneHeight] = line.split('\t');
+        const parts = line.split('\t');
+        const [paneId, panePid, currentCommand, startCommand, sessionName, windowIndex, paneWidth, paneHeight] = parts;
+        if (!paneId || !sessionName)
+            return null;
         return {
             paneId,
-            panePid: parseInt(panePid, 10),
-            currentCommand,
-            startCommand,
+            panePid: parseInt(panePid ?? '0', 10),
+            currentCommand: currentCommand ?? '',
+            startCommand: startCommand ?? '',
             sessionName,
-            windowIndex: parseInt(windowIndex, 10),
-            paneWidth: parseInt(paneWidth, 10),
-            paneHeight: parseInt(paneHeight, 10),
+            windowIndex: parseInt(windowIndex ?? '0', 10),
+            paneWidth: parseInt(paneWidth ?? '0', 10),
+            paneHeight: parseInt(paneHeight ?? '0', 10),
         };
     })
+        .filter((p) => p !== null)
         .sort((a, b) => a.paneId.localeCompare(b.paneId));
 }
 /**
