@@ -1,8 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { promisify } from 'node:util';
-
-const execFileAsync = promisify(execFile);
+import { execFile, spawn, execFileSync, spawnSync, type ChildProcess } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -147,18 +143,31 @@ export function runTmux(args: string[]): TmuxResult {
 }
 
 export async function runTmuxAsync(args: string[]): Promise<TmuxResult> {
-  try {
-    const { stdout, stderr, status, error } = await execFileAsync('tmux', args);
-    if (error) {
-      return { ok: false, stderr: error.message };
-    }
-    if (status !== 0) {
-      return { ok: false, stderr: (stderr || '').trim() || `tmux exited ${status}` };
-    }
-    return { ok: true, stdout: (stdout || '').trim() };
-  } catch (error) {
-    return { ok: false, stderr: error instanceof Error ? error.message : String(error) };
-  }
+  return new Promise((resolve) => {
+    const proc = spawn('tmux', args);
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout?.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr?.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        resolve({ ok: false, stderr: stderr.trim() || `tmux exited ${code}` });
+      } else {
+        resolve({ ok: true, stdout: stdout.trim() });
+      }
+    });
+
+    proc.on('error', (error) => {
+      resolve({ ok: false, stderr: error.message });
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------

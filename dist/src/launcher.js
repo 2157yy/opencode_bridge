@@ -1,5 +1,30 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { createSplitPane } from './tmux.js';
+export function detectLaunchMode() {
+    if (process.env.OPENCODE_LAUNCH_MODE === 'split-pane' && process.env.TMUX) {
+        return 'split-pane';
+    }
+    const kind = detectVisibleLauncherKind();
+    if (kind === 'tmux')
+        return 'new-window';
+    if (kind === 'terminal-app')
+        return 'terminal-app';
+    if (kind === 'linux-terminal')
+        return 'linux-terminal';
+    return 'new-window';
+}
 export function defaultLauncher(command, args, options) {
+    // Support split-pane mode when inside tmux and OPENCODE_LAUNCH_MODE is set
+    if (process.env.OPENCODE_LAUNCH_MODE === 'split-pane' && process.env.TMUX) {
+        const result = splitPaneLauncher(command, args, options);
+        // Return a dummy ChildProcess-like object with paneId info
+        // The actual process management is handled by tmux
+        const dummyProc = spawn('sleep', ['infinity'], { detached: true, stdio: 'ignore' });
+        dummyProc.unref();
+        dummyProc.paneId = result.paneId;
+        dummyProc.tmuxTarget = result.target;
+        return dummyProc;
+    }
     const shellCommand = buildShellCommand(command, args, options);
     const title = normalizeTitle(options.title ?? command);
     if (process.env.TMUX && hasCommand('tmux')) {
@@ -54,6 +79,21 @@ export function detectVisibleLauncherKind() {
         return linuxTerminalLaunchers('worker', '').find((launcher) => hasCommand(launcher.command)) ? 'linux-terminal' : undefined;
     }
     return undefined;
+}
+export function splitPaneLauncher(command, args, options) {
+    const shellCommand = buildShellCommand(command, args, options);
+    const result = createSplitPane({
+        direction: 'vertical',
+        percentage: 30,
+        cwd: options.cwd,
+        env: options.env,
+        shellCommand,
+    });
+    // Return a placeholder that keeps the process alive
+    // The actual process is managed by tmux
+    const proc = spawn('sleep', ['infinity'], { detached: true, stdio: 'ignore' });
+    proc.unref();
+    return { paneId: result.paneId, target: result.target, pid: proc.pid };
 }
 function linuxTerminalLaunchers(title, shellCommand) {
     return [

@@ -1,4 +1,5 @@
 import { createOpencodeClient, createOpencodeServer } from '@opencode-ai/sdk';
+import { injectCommand, waitForPaneReady, normalizeCapture, shellQuote, buildEnvPrefix } from './tmux.js';
 export async function startBackend(options) {
     const server = await createOpencodeServer({
         hostname: '127.0.0.1',
@@ -51,4 +52,21 @@ function pickFlatLlm(options) {
         ...(options.model ? { model: options.model } : {}),
     };
     return Object.keys(llmConfig).length > 0 ? llmConfig : undefined;
+}
+export async function autoStartCli(options) {
+    const { paneId, serverUrl, sessionId, projectDir, env, timeoutMs = 30_000 } = options;
+    const envPrefix = buildEnvPrefix(env);
+    const command = [
+        'cd', shellQuote(projectDir), '&&',
+        ...(envPrefix ? [envPrefix] : []),
+        'opencode', 'attach', serverUrl,
+        '--dir', shellQuote(projectDir),
+        `--session=${sessionId}`,
+    ].join(' ');
+    await injectCommand(paneId, command, 200);
+    const ready = await waitForPaneReady(paneId, timeoutMs, (capture) => {
+        const normalized = normalizeCapture(capture);
+        return normalized.length > 20 && !/^(loading|starting)/i.test(normalized);
+    });
+    return { paneId, ready };
 }

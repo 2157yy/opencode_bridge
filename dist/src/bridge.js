@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { readJsonFile, writeJsonFile } from './store.js';
 import { BridgeRegistry } from './registry.js';
-import { createClient, defaultLaunchPlan, startBackend } from './opencode.js';
-import { defaultLauncher } from './launcher.js';
+import { createClient, defaultLaunchPlan, startBackend, autoStartCli } from './opencode.js';
+import { defaultLauncher, buildShellCommand } from './launcher.js';
 import { mapSessionStatus, summarizeSessionStatus } from './state-machine.js';
+import { isInsideTmux, isTmuxAvailable, createSplitPane } from './tmux.js';
 export class OpenCodeBridge {
     statePath;
     projectDir;
@@ -15,6 +16,10 @@ export class OpenCodeBridge {
     launchPlanFactory;
     clock;
     stopWaitMs;
+    useSplitPane;
+    splitDirection;
+    splitPercentage;
+    autoRoute;
     registry;
     backend;
     serverUrl;
@@ -32,6 +37,10 @@ export class OpenCodeBridge {
         this.launchPlanFactory = options.launchPlanFactory ?? defaultLaunchPlan;
         this.clock = options.clock ?? (() => new Date());
         this.stopWaitMs = options.stopWaitMs ?? 5_000;
+        this.useSplitPane = options.useSplitPane ?? false;
+        this.splitDirection = options.splitDirection ?? 'vertical';
+        this.splitPercentage = options.splitPercentage ?? 25;
+        this.autoRoute = options.autoRoute ?? false;
         this.registry = new BridgeRegistry(this.projectDir);
     }
     async start() {
@@ -144,6 +153,51 @@ export class OpenCodeBridge {
             llmConfig,
         });
         const spawnEnv = Object.fromEntries(Object.entries({ ...process.env, ...launchPlan.env }).filter(([, v]) => v !== undefined));
+        const useSplitPaneMode = this.useSplitPane && isInsideTmux() && isTmuxAvailable();
+        if (useSplitPaneMode) {
+            // Use tmux split-pane mode
+            const shellCommand = buildShellCommand(launchPlan.command, launchPlan.args, {
+                cwd: this.projectDir,
+                env: spawnEnv,
+                title: options.name,
+            });
+            const splitResult = createSplitPane({
+                direction: this.splitDirection,
+                percentage: this.splitPercentage,
+                cwd: this.projectDir,
+                env: spawnEnv,
+                shellCommand,
+            });
+            const paneId = splitResult.paneId;
+            // Auto-inject CLI command if autoRoute is enabled
+            if (this.autoRoute) {
+                await autoStartCli({
+                    paneId,
+                    serverUrl: this.serverUrl,
+                    sessionId: session.id,
+                    projectDir: this.projectDir,
+                    env: spawnEnv,
+                });
+            }
+            const record = this.registry.register({
+                id: session.id,
+                role,
+                name: options.name,
+                sessionId: session.id,
+                windowId: paneId,
+                parentId: parent?.id ?? undefined,
+                command: launchPlan.command,
+                args: launchPlan.args,
+                status: 'running',
+                phase: 'running',
+                llm: llmConfig,
+                llmConfig,
+                llmEnv: spawnEnv,
+                runtimeId,
+            });
+            await this.persist();
+            return this.requireAgent(record.id);
+        }
         const proc = this.launcher(launchPlan.command, launchPlan.args, {
             cwd: this.projectDir,
             title: options.name,
