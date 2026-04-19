@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createSplitPane, buildEnvPrefix, type SplitPaneResult } from './tmux.js';
+import { createSplitPane } from './tmux.js';
 
 export type LauncherOptions = {
   cwd: string;
@@ -23,6 +23,18 @@ export function detectLaunchMode(): LaunchMode {
 }
 
 export function defaultLauncher(command: string, args: string[], options: LauncherOptions): ChildProcess {
+  // Support split-pane mode when inside tmux and OPENCODE_LAUNCH_MODE is set
+  if (process.env.OPENCODE_LAUNCH_MODE === 'split-pane' && process.env.TMUX) {
+    const result = splitPaneLauncher(command, args, options);
+    // Return a dummy ChildProcess-like object with paneId info
+    // The actual process management is handled by tmux
+    const dummyProc = spawn('sleep', ['infinity'], { detached: true, stdio: 'ignore' });
+    dummyProc.unref();
+    (dummyProc as ChildProcess & { paneId?: string; tmuxTarget?: string }).paneId = result.paneId;
+    (dummyProc as ChildProcess & { paneId?: string; tmuxTarget?: string }).tmuxTarget = result.target;
+    return dummyProc;
+  }
+
   const shellCommand = buildShellCommand(command, args, options);
   const title = normalizeTitle(options.title ?? command);
 

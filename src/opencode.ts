@@ -1,6 +1,7 @@
 import { createOpencodeClient, createOpencodeServer } from '@opencode-ai/sdk';
 import type { ChildProcess } from 'node:child_process';
 import type { LlmConfig } from './registry.js';
+import { injectCommand, waitForPaneReady, normalizeCapture, shellQuote, buildEnvPrefix } from './tmux.js';
 
 export type BackendHandle = {
   url: string;
@@ -100,4 +101,33 @@ function pickFlatLlm(options: Pick<LaunchOptions, 'apiKey' | 'baseUrl' | 'model'
     ...(options.model ? { model: options.model } : {}),
   };
   return Object.keys(llmConfig).length > 0 ? llmConfig : undefined;
+}
+
+export async function autoStartCli(options: {
+  paneId: string;
+  serverUrl: string;
+  sessionId: string;
+  projectDir: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<{ paneId: string; ready: boolean }> {
+  const { paneId, serverUrl, sessionId, projectDir, env, timeoutMs = 30_000 } = options;
+
+  const envPrefix = buildEnvPrefix(env);
+  const command = [
+    'cd', shellQuote(projectDir), '&&',
+    ...(envPrefix ? [envPrefix] : []),
+    'opencode', 'attach', serverUrl,
+    '--dir', shellQuote(projectDir),
+    `--session=${sessionId}`,
+  ].join(' ');
+
+  await injectCommand(paneId, command, 200);
+
+  const ready = await waitForPaneReady(paneId, timeoutMs, (capture) => {
+    const normalized = normalizeCapture(capture);
+    return normalized.length > 20 && !/^(loading|starting)/i.test(normalized);
+  });
+
+  return { paneId, ready };
 }

@@ -52,7 +52,7 @@ export interface SplitPaneResult {
 
 const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-9;]*[A-Za-z])/g;
 
-function normalizeCapture(raw: string): string {
+export function normalizeCapture(raw: string): string {
   return raw.replace(ANSI_RE, '').trim();
 }
 
