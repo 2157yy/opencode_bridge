@@ -57,7 +57,7 @@ export function normalizeCapture(raw: string): string {
 // ---------------------------------------------------------------------------
 
 export function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 
 export function buildEnvPrefix(env?: NodeJS.ProcessEnv): string {

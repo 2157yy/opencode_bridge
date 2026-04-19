@@ -10,7 +10,7 @@ export function normalizeCapture(raw) {
 // Utility
 // ---------------------------------------------------------------------------
 export function shellQuote(value) {
-    return `'${value.replace(/'/g, `'\\''`)}'`;
+    return `'${value.replace(/'/g, `'\"'\"'`)}'`;
 }
 export function buildEnvPrefix(env) {
     if (!env)

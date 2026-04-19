@@ -3,8 +3,8 @@ import test from 'node:test';
 import { shellQuote, buildEnvPrefix, delay, normalizeCapture, isInsideTmux, isTmuxAvailable, } from '../src/tmux.js';
 test('shellQuote escapes single quotes correctly', () => {
     assert.equal(shellQuote('hello'), "'hello'");
-    // The escaped version produces: 'it\'s' where \' is an escaped single quote
-    assert.equal(shellQuote("it's"), "'it\\'s'");
+    // shellQuote uses shell escaping: 'it'"'"'s' means: 'it' + " (end quote) + ' (single quote) + " (start quote) + 's'
+    assert.equal(shellQuote("it's"), "'it'\"'\"'s'");
     assert.equal(shellQuote('hello world'), "'hello world'");
     assert.equal(shellQuote(''), "''");
 });
