@@ -7,14 +7,27 @@
  * Per PRD_TMUX_INTEGRATION.md §3.
  */
 import { spawnSync, execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-const execFileAsync = promisify(execFile);
 // ---------------------------------------------------------------------------
 // Module-level cache
 // ---------------------------------------------------------------------------
 let _cachedTmuxAvailable;
+const runtimeDeps = {
+    spawnSync,
+    execFile,
+};
 export function _resetCache() {
     _cachedTmuxAvailable = undefined;
+}
+export function _setTmuxTestDeps(deps) {
+    if (deps.spawnSync)
+        runtimeDeps.spawnSync = deps.spawnSync;
+    if (deps.execFile)
+        runtimeDeps.execFile = deps.execFile;
+}
+export function _resetTmuxTestDeps() {
+    runtimeDeps.spawnSync = spawnSync;
+    runtimeDeps.execFile = execFile;
+    _resetCache();
 }
 // ---------------------------------------------------------------------------
 // Environment detection
@@ -26,7 +39,7 @@ export function _resetCache() {
 export function isTmuxAvailable() {
     if (_cachedTmuxAvailable !== undefined)
         return _cachedTmuxAvailable;
-    const result = spawnSync('tmux', ['-V'], { encoding: 'utf-8' });
+    const result = runtimeDeps.spawnSync('tmux', ['-V'], { encoding: 'utf-8' });
     if (result.error) {
         _cachedTmuxAvailable = false;
         return false;
@@ -71,7 +84,7 @@ export function getCurrentPaneId() {
  * Synchronously execute a tmux subcommand.
  */
 export function runTmux(args) {
-    const result = spawnSync('tmux', args, { encoding: 'utf-8' });
+    const result = runtimeDeps.spawnSync('tmux', args, { encoding: 'utf-8' });
     if (result.error) {
         return { ok: false, stderr: result.error.message };
     }
@@ -85,7 +98,7 @@ export function runTmux(args) {
  */
 export async function runTmuxAsync(args) {
     return new Promise((resolve) => {
-        execFile('tmux', args, { encoding: 'utf-8' }, (error, stdout, stderr) => {
+        runtimeDeps.execFile('tmux', args, { encoding: 'utf-8' }, (error, stdout, stderr) => {
             if (error) {
                 resolve({ ok: false, stderr: error.message });
                 return;
@@ -200,7 +213,7 @@ export function createSplitPane(options) {
     if (!result.ok) {
         throw new Error(`createSplitPane failed: ${result.stderr}`);
     }
-    const [paneId, target] = result.stdout.split('\t');
+    const [paneId, target = ''] = result.stdout.split('\t');
     if (!paneId?.startsWith('%')) {
         throw new Error(`createSplitPane: unexpected output: ${result.stdout}`);
     }
@@ -224,7 +237,7 @@ export function isPaneAlive(paneId) {
     const result = runTmux(['list-panes', '-t', paneId, '-F', '#{pane_dead} #{pane_pid}']);
     if (!result.ok)
         return false;
-    const [deadStr, pidStr] = result.stdout.split(' ');
+    const [deadStr, pidStr = '0'] = result.stdout.split(' ');
     if (deadStr === '1')
         return false;
     const pid = parseInt(pidStr, 10);
@@ -285,7 +298,7 @@ export async function injectCommand(target, command, delayMs) {
 // Output capture
 // ---------------------------------------------------------------------------
 const ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-9;]*[A-Za-z])/g;
-function normalizeCapture(raw) {
+export function normalizeCapture(raw) {
     return raw.replace(ANSI_RE, '').trim();
 }
 /**

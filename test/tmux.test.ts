@@ -8,46 +8,60 @@
  */
 
 import assert from 'node:assert/strict';
-import test from 'node:test';
-import { mock, type MockMethodOptions } from 'node:test/mock';
-
-// We import the child_process namespace to mock spawnSync on it.
-// tmux.ts accesses spawnSync from node:child_process at call time (via module lookup),
-// so mocking nodeChildProcess.spawnSync intercepts the calls.
-import * as nodeChildProcess from 'node:child_process';
+import test, { afterEach } from 'node:test';
 import type { SpawnSyncReturns } from 'node:child_process';
+import { _resetTmuxTestDeps, _setTmuxTestDeps } from '../src/tmux.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeSpawnSyncMock(behavior: () => SpawnSyncReturns<string>) {
-  return mock.method(nodeChildProcess, 'spawnSync', behavior as typeof nodeChildProcess.spawnSync);
+let restoreDeps: (() => void) | undefined;
+
+afterEach(() => {
+  restoreDeps?.();
+  restoreDeps = undefined;
+});
+
+function setTmuxDeps(
+  spawnSyncImpl?: (...args: any[]) => SpawnSyncReturns<string>,
+  execFileImpl?: (...args: any[]) => void,
+) {
+  _resetTmuxTestDeps();
+  _setTmuxTestDeps({
+    ...(spawnSyncImpl ? { spawnSync: spawnSyncImpl as never } : {}),
+    ...(execFileImpl ? { execFile: execFileImpl as never } : {}),
+  });
+  restoreDeps = _resetTmuxTestDeps;
 }
 
-function makeExecFileMock(behavior: () => { stdout: string; stderr: string; exitCode?: number; error?: Error }) {
-  return mock.method(nodeChildProcess, 'execFile', behavior as typeof nodeChildProcess.execFile);
+function makeSpawnSyncMock(behavior: (...args: unknown[]) => SpawnSyncReturns<string>) {
+  return setTmuxDeps(behavior);
+}
+
+function makeExecFileMock(behavior: (...args: unknown[]) => { stdout: string; stderr: string; exitCode?: number; error?: Error }) {
+  return setTmuxDeps(undefined, behavior as never);
 }
 
 // ---------------------------------------------------------------------------
 // isTmuxAvailable
 // ---------------------------------------------------------------------------
 
-test('isTmuxAvailable returns true when tmux -V exits 0', () => {
+test('isTmuxAvailable returns true when tmux -V exits 0', async () => {
   const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
   _resetCache();
   makeSpawnSyncMock(() => ({ status: 0, stdout: 'tmux 3.4', stderr: '', error: undefined } as SpawnSyncReturns<string>));
   assert.equal(isTmuxAvailable(), true);
 });
 
-test('isTmuxAvailable returns false when tmux -V exits non-zero', () => {
+test('isTmuxAvailable returns false when tmux -V exits non-zero', async () => {
   const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
   _resetCache();
   makeSpawnSyncMock(() => ({ status: 1, stdout: '', stderr: 'not found', error: undefined } as SpawnSyncReturns<string>));
   assert.equal(isTmuxAvailable(), false);
 });
 
-test('isTmuxAvailable returns false when tmux does not exist (ENOENT)', () => {
+test('isTmuxAvailable returns false when tmux does not exist (ENOENT)', async () => {
   const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
   _resetCache();
   const enoent = new Error('ENOENT') as NodeJS.ErrnoException;
@@ -56,7 +70,7 @@ test('isTmuxAvailable returns false when tmux does not exist (ENOENT)', () => {
   assert.equal(isTmuxAvailable(), false);
 });
 
-test('isTmuxAvailable caches result — second call does not re-spawn', () => {
+test('isTmuxAvailable caches result — second call does not re-spawn', async () => {
   const { isTmuxAvailable, _resetCache } = await import('../src/tmux.js');
   _resetCache();
   let callCount = 0;
@@ -159,10 +173,11 @@ test('createSplitPane uses -h for horizontal direction', async () => {
   let capturedArgs: string[] = [];
   try {
     const { createSplitPane } = await import('../src/tmux.js');
-    makeSpawnSyncMock((cmd: string, args: string[]) => {
+    makeSpawnSyncMock((..._args: any[]) => {
+      const [, args] = _args as [string, string[]];
       capturedArgs = args;
       return { status: 0, stdout: '%6\tsession_name:0.2', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-    } as typeof nodeChildProcess.spawnSync);
+    });
     createSplitPane({ cwd: '/tmp', direction: 'horizontal' });
     assert.ok(capturedArgs.includes('-h'), `expected -h in args: ${capturedArgs.join(' ')}`);
   } finally {
@@ -176,10 +191,11 @@ test('createSplitPane passes -l size when size is provided', async () => {
   let capturedArgs: string[] = [];
   try {
     const { createSplitPane } = await import('../src/tmux.js');
-    makeSpawnSyncMock((cmd: string, args: string[]) => {
+    makeSpawnSyncMock((..._args: any[]) => {
+      const [, args] = _args as [string, string[]];
       capturedArgs = args;
       return { status: 0, stdout: '%7\tsession_name:0.3', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-    } as typeof nodeChildProcess.spawnSync);
+    });
     createSplitPane({ cwd: '/tmp', size: 20 });
     assert.ok(capturedArgs.includes('-l'), `expected -l in args: ${capturedArgs.join(' ')}`);
     assert.ok(capturedArgs.includes('20'), `expected size 20 in args: ${capturedArgs.join(' ')}`);
@@ -194,10 +210,11 @@ test('createSplitPane passes -p percentage when percentage is provided', async (
   let capturedArgs: string[] = [];
   try {
     const { createSplitPane } = await import('../src/tmux.js');
-    makeSpawnSyncMock((cmd: string, args: string[]) => {
+    makeSpawnSyncMock((..._args: any[]) => {
+      const [, args] = _args as [string, string[]];
       capturedArgs = args;
       return { status: 0, stdout: '%8\tsession_name:0.4', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-    } as typeof nodeChildProcess.spawnSync);
+    });
     createSplitPane({ cwd: '/tmp', percentage: 30 });
     assert.ok(capturedArgs.includes('-p'), `expected -p in args: ${capturedArgs.join(' ')}`);
     assert.ok(capturedArgs.includes('30'), `expected percentage 30 in args: ${capturedArgs.join(' ')}`);
@@ -211,7 +228,13 @@ test('createSplitPane throws when tmux command fails', async () => {
   process.env.TMUX = 'session_name,12345,0';
   try {
     const { createSplitPane } = await import('../src/tmux.js');
-    makeSpawnSyncMock(() => ({ status: 1, stdout: '', stderr: 'split failed', error: undefined } as SpawnSyncReturns<string>));
+    makeSpawnSyncMock((...args: any[]) => {
+      const tmuxArgs = (args[1] ?? []) as string[];
+      if (tmuxArgs[0] === '-V') {
+        return { status: 0, stdout: 'tmux 3.4', stderr: '', error: undefined } as SpawnSyncReturns<string>;
+      }
+      return { status: 1, stdout: '', stderr: 'split failed', error: undefined } as SpawnSyncReturns<string>;
+    });
     assert.throws(() => createSplitPane({ cwd: '/tmp' }), /createSplitPane failed/i);
   } finally {
     process.env.TMUX = original;
@@ -225,31 +248,33 @@ test('createSplitPane throws when tmux command fails', async () => {
 test('sendKeys sends text in literal mode and sends C-m for enter', async () => {
   const { sendKeys } = await import('../src/tmux.js');
   const capturedArgs: string[][] = [];
-  makeSpawnSyncMock((cmd: string, args: string[]) => {
+  makeSpawnSyncMock((..._args: any[]) => {
+    const [cmd, args] = _args as [string, string[]];
     capturedArgs.push([cmd, ...args]);
     return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-  } as typeof nodeChildProcess.spawnSync);
+  });
 
   sendKeys({ target: '%0', text: 'hello world', enter: true, literal: true });
 
   assert.equal(capturedArgs.length, 2);
-  const [, ...args1] = capturedArgs[0];
+  const args1 = capturedArgs[0] ?? [];
   assert.ok(args1.includes('send-keys'));
   assert.ok(args1.includes('-t'));
   assert.ok(args1.includes('%0'));
   assert.ok(args1.includes('-l'));
   assert.ok(args1.includes('hello world'));
-  const [, ...args2] = capturedArgs[1];
+  const args2 = capturedArgs[1] ?? [];
   assert.ok(args2.includes('C-m'));
 });
 
 test('sendKeys does not send C-m when enter is false', async () => {
   const { sendKeys } = await import('../src/tmux.js');
   const capturedArgs: string[][] = [];
-  makeSpawnSyncMock((cmd: string, args: string[]) => {
+  makeSpawnSyncMock((..._args: any[]) => {
+    const [cmd, args] = _args as [string, string[]];
     capturedArgs.push([cmd, ...args]);
     return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-  } as typeof nodeChildProcess.spawnSync);
+  });
 
   sendKeys({ target: '%0', text: 'hello', enter: false });
 
@@ -259,10 +284,11 @@ test('sendKeys does not send C-m when enter is false', async () => {
 test('sendKeys omits -l flag when literal is false', async () => {
   const { sendKeys } = await import('../src/tmux.js');
   let capturedArgs: string[] = [];
-  makeSpawnSyncMock((cmd: string, args: string[]) => {
+  makeSpawnSyncMock((..._args: any[]) => {
+    const [, args] = _args as [string, string[]];
     capturedArgs = args;
     return { status: 0, stdout: '', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-  } as typeof nodeChildProcess.spawnSync);
+  });
 
   sendKeys({ target: '%0', text: 'hello', literal: false });
 
@@ -298,7 +324,7 @@ test('waitForPaneReady resolves true when readinessCheck returns true', async ()
     pollCount++;
     const output = pollCount >= 3 ? '$ ' : 'loading...';
     return { status: 0, stdout: output, stderr: '', error: undefined } as SpawnSyncReturns<string>;
-  } as typeof nodeChildProcess.spawnSync);
+  });
 
   const result = await waitForPaneReady('%0', 5000, (c: string) => c.includes('$'));
   assert.equal(result, true);
@@ -318,7 +344,7 @@ test('waitForPaneReady uses custom readinessCheck', async () => {
   makeSpawnSyncMock(() => {
     pollCount++;
     return { status: 0, stdout: pollCount >= 2 ? 'READY' : 'waiting', stderr: '', error: undefined } as SpawnSyncReturns<string>;
-  } as typeof nodeChildProcess.spawnSync);
+  });
 
   const result = await waitForPaneReady('%0', 5000, (c: string) => c.includes('READY'));
   assert.equal(result, true);
